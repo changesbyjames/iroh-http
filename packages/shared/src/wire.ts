@@ -227,30 +227,52 @@ function errorPayload(message: string): Uint8Array {
   return bytes.subarray(0, end);
 }
 
+/** Write source chunks, cancelling a stalled source when the exchange aborts. */
+async function writeBodyChunks(
+  stream: ExchangeStream,
+  body: ReadableStream<Uint8Array>,
+  signal?: AbortSignal
+): Promise<void> {
+  const reader = body.getReader();
+  const onAbort = () => {
+    // Cancelling releases a stalled read immediately, even if the source's
+    // own cancellation takes longer or fails.
+    reader.cancel(signal?.reason).catch(() => undefined);
+  };
+  signal?.addEventListener('abort', onAbort, { once: true });
+  try {
+    // Split each source chunk into bounded frames, until EOF or cancellation.
+    for (;;) {
+      const { done, value } = await reader.read();
+      signal?.throwIfAborted();
+      if (done) break;
+      for (let offset = 0; offset < value.byteLength; offset += MAX_CHUNK_SIZE) {
+        await stream.write(bodyFrame(BodyTag.Data, value.subarray(offset, offset + MAX_CHUNK_SIZE)));
+      }
+    }
+  } finally {
+    signal?.removeEventListener('abort', onAbort);
+    reader.releaseLock();
+  }
+}
+
 /**
  * Stream a body as body frames, terminating with `END` or `ERROR`.
  *
- * The send side is finished either way, per `SPEC.md`.
+ * The send side is finished either way, per `SPEC.md`, unless aborted.
  */
-async function writeBody(stream: ExchangeStream, body: ReadableStream<Uint8Array> | null): Promise<void> {
+async function writeBody(
+  stream: ExchangeStream,
+  body: ReadableStream<Uint8Array> | null,
+  signal?: AbortSignal
+): Promise<void> {
+  signal?.throwIfAborted();
   try {
-    // Each chunk is split into frames of at most `MAX_CHUNK_SIZE` bytes.
-    if (body) {
-      const reader = body.getReader();
-      try {
-        for (;;) {
-          const { done, value } = await reader.read();
-          if (done) break;
-          for (let offset = 0; offset < value.byteLength; offset += MAX_CHUNK_SIZE) {
-            await stream.write(bodyFrame(BodyTag.Data, value.subarray(offset, offset + MAX_CHUNK_SIZE)));
-          }
-        }
-      } finally {
-        reader.releaseLock();
-      }
-    }
+    if (body) await writeBodyChunks(stream, body, signal);
     await stream.write(bodyFrame(BodyTag.End, EMPTY));
   } catch (cause) {
+    // A cancelled exchange must not try to send an in-band body error.
+    if (signal?.aborted) throw signal.reason;
     // The head is already committed, so the failure has to travel in-band.
     const message = cause instanceof Error ? cause.message : String(cause);
     try {
@@ -285,30 +307,68 @@ async function readBodyFrame(stream: ExchangeStream): Promise<Uint8Array | null>
   return length === 0 ? EMPTY : await stream.readExact(length);
 }
 
+interface BodyReadOptions {
+  onEnd?: () => void;
+  onSettled?: () => void;
+  signal?: AbortSignal;
+}
+
 /**
  * Read body frames into a `ReadableStream`, surfacing `ERROR` as a failure.
  *
- * `onEnd` runs once the terminal `END` frame has been read.
+ * `onEnd` runs only at a clean `END`; `onSettled` also runs on error or cancel.
  */
-function readBody(stream: ExchangeStream, onEnd: () => void = () => undefined): ReadableStream<Uint8Array> {
+function readBody(stream: ExchangeStream, options: BodyReadOptions = {}): ReadableStream<Uint8Array> {
+  let settled = false;
+  let onAbort = () => undefined;
+  const settle = () => {
+    if (settled) return;
+    settled = true;
+    options.signal?.removeEventListener('abort', onAbort);
+    options.onSettled?.();
+  };
   return new ReadableStream<Uint8Array>({
+    start(controller) {
+      onAbort = () => {
+        // Error the body itself so queued data and pending reads both reject
+        // with the caller's reason, rather than a transport reset error.
+        controller.error(options.signal?.reason);
+        settle();
+      };
+      if (options.signal?.aborted) onAbort();
+      else options.signal?.addEventListener('abort', onAbort, { once: true });
+    },
+    // Framing errors settle the body just as EOF or cancellation does.
     async pull(controller) {
-      for (;;) {
-        const chunk = await readBodyFrame(stream);
-        if (!chunk) {
-          onEnd();
-          controller.close();
-          return;
+      try {
+        // Empty frames are skipped; terminal frames close, and cancellation
+        // discards a read that completes after the body was settled.
+        while (!settled) {
+          const chunk = await readBodyFrame(stream);
+          // Cancellation or abort may have settled the body during the read.
+          if (settled) return;
+          if (!chunk) {
+            options.onEnd?.();
+            settle();
+            controller.close();
+            return;
+          }
+          // A zero-length DATA frame is legal but must not be enqueued, because
+          // an empty chunk is indistinguishable from backpressure to consumers.
+          if (chunk.byteLength > 0) {
+            controller.enqueue(chunk);
+            return;
+          }
         }
-        // A zero-length DATA frame is legal but must not be enqueued, because
-        // an empty chunk is indistinguishable from backpressure to consumers.
-        if (chunk.byteLength > 0) {
-          controller.enqueue(chunk);
-          return;
+      } catch (error) {
+        if (!settled) {
+          controller.error(error);
+          settle();
         }
       }
     },
     async cancel() {
+      settle();
       await stream.stop();
     }
   });
@@ -330,7 +390,12 @@ function isBodyless(method: string): boolean {
 }
 
 /** Write a `Request` to an exchange stream as a request head and body. */
-export async function writeRequest(stream: ExchangeStream, request: Request): Promise<void> {
+export async function writeRequest(
+  stream: ExchangeStream,
+  request: Request,
+  signal: AbortSignal = request.signal
+): Promise<void> {
+  signal.throwIfAborted();
   const url = new URL(request.url);
   const method = request.method.toUpperCase();
   await writeHead(stream, {
@@ -338,7 +403,7 @@ export async function writeRequest(stream: ExchangeStream, request: Request): Pr
     target: `${url.pathname}${url.search}`,
     headers: encodeHeaders(request.headers)
   });
-  await writeBody(stream, isBodyless(method) ? null : request.body);
+  await writeBody(stream, isBodyless(method) ? null : request.body, signal);
 }
 
 /** `RequestInit` for a streamed request body. */
@@ -380,8 +445,10 @@ export async function receiveRequest(stream: ExchangeStream, peer: PeerInfo): Pr
   }
 
   const progress = { ended: false };
-  const body = readBody(stream, () => {
-    progress.ended = true;
+  const body = readBody(stream, {
+    onEnd: () => {
+      progress.ended = true;
+    }
   });
   const streaming: StreamingRequestInit = { ...init, body, duplex: 'half' };
   return { request: new Request(url, streaming), bodyEnded: () => progress.ended };
@@ -415,7 +482,11 @@ export async function writeResponse(stream: ExchangeStream, response: Response):
  *
  * @internal Used by `IrohHttpClient`; call {@link readResponse} instead.
  */
-export async function readResponseHead(stream: ExchangeStream): Promise<() => Promise<Response>> {
+export async function readResponseHead(
+  stream: ExchangeStream,
+  signal?: AbortSignal,
+  onSettled: () => void = () => undefined
+): Promise<() => Promise<Response>> {
   const { status, headers } = parseResponseHead(await readHead(stream));
 
   if (status < 200 || status > 599) {
@@ -428,10 +499,14 @@ export async function readResponseHead(stream: ExchangeStream): Promise<() => Pr
   return async () => {
     // `Response` forbids a body on these statuses, so the frames are drained.
     if (status === 204 || status === 205 || status === 304) {
-      await drainBody(stream);
+      try {
+        await drainBody(stream);
+      } finally {
+        onSettled();
+      }
       return new Response(null, { status, headers: decoded });
     }
-    return new Response(readBody(stream), { status, headers: decoded });
+    return new Response(readBody(stream, { signal, onSettled }), { status, headers: decoded });
   };
 }
 

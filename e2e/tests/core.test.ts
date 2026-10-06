@@ -5,19 +5,337 @@
  * because they require sending bytes no conformant implementation would send.
  */
 
+import { getEventListeners } from 'node:events';
 import { describe, expect, it, vi } from 'vitest';
 import {
   HEAD_PREFIX_SIZE,
   MAX_HEAD_SIZE,
+  IrohHttpClient,
   readResponse,
   serveExchange,
   writeRequest,
+  writeResponse,
+  type ExchangeStream,
   type Handler
 } from '@strangecyan/iroh-http-core';
 import { createStreamPair } from '../streams.ts';
 
 const peer = { endpointId: 'test-endpoint' };
 const encoder = new TextEncoder();
+
+describe('IrohHttpClient abort', () => {
+  it.each(['init', 'request'])('rejects a pre-aborted %s signal without opening a stream', async source => {
+    const pair = createStreamPair();
+    const openStream = vi.fn(async () => pair.client);
+    const http = new IrohHttpClient({
+      remoteId: () => peer.endpointId,
+      openStream,
+      acceptStream: openStream,
+      close() {}
+    });
+    const abort = new AbortController();
+    const reason = new Error('already cancelled');
+    abort.abort(reason);
+
+    const pending =
+      source === 'init'
+        ? http.fetch('/', { signal: abort.signal })
+        : http.fetch(new Request('http://peer.iroh/', { signal: abort.signal }));
+
+    await expect(pending).rejects.toBe(reason);
+    expect(openStream).not.toHaveBeenCalled();
+  });
+
+  it.each(['resolve', 'reject'])('abandons an opening stream that later %ss', async outcome => {
+    const pair = createStreamPair();
+    const opening = Promise.withResolvers<ExchangeStream>();
+    const openStream = vi.fn(() => opening.promise);
+    const write = vi.spyOn(pair.client, 'write');
+    const http = new IrohHttpClient({
+      remoteId: () => peer.endpointId,
+      openStream,
+      acceptStream: openStream,
+      close() {}
+    });
+    const abort = new AbortController();
+    const reason = new Error('cancelled while opening');
+    const rejected = expect(http.fetch('/', { signal: abort.signal })).rejects.toBe(reason);
+
+    abort.abort(reason);
+    await rejected;
+    if (outcome === 'resolve') {
+      opening.resolve(pair.client);
+      await vi.waitFor(() => expect(pair.clientRecord.reset).toBe(true));
+    } else {
+      opening.reject(new Error('late opening failure'));
+      await opening.promise.catch(() => undefined);
+    }
+    expect(write).not.toHaveBeenCalled();
+  });
+
+  it('rejects while awaiting headers and resets the exchange', async () => {
+    const pair = createStreamPair();
+    const arrived = Promise.withResolvers<void>();
+    const gate = Promise.withResolvers<void>();
+    const openStream = async () => pair.client;
+    const http = new IrohHttpClient({
+      remoteId: () => peer.endpointId,
+      openStream,
+      acceptStream: openStream,
+      close() {}
+    });
+    const serving = serveExchange(
+      pair.server,
+      async () => {
+        arrived.resolve();
+        await gate.promise;
+        return new Response('too late');
+      },
+      peer
+    );
+    const abort = new AbortController();
+    const reason = new Error('cancelled before headers');
+    const rejected = expect(http.fetch('/', { signal: abort.signal })).rejects.toBe(reason);
+
+    try {
+      await arrived.promise;
+      abort.abort(reason);
+      await rejected;
+      expect(pair.clientRecord.reset).toBe(true);
+    } finally {
+      gate.resolve();
+      await serving;
+    }
+  });
+
+  it('cancels an upload stalled on its source', async () => {
+    const pair = createStreamPair();
+    const reading = Promise.withResolvers<void>();
+    const cancelled = vi.fn();
+    const body = new ReadableStream<Uint8Array>(
+      { pull: () => reading.resolve(), cancel: cancelled },
+      { highWaterMark: 0 }
+    );
+    const openStream = async () => pair.client;
+    const http = new IrohHttpClient({
+      remoteId: () => peer.endpointId,
+      openStream,
+      acceptStream: openStream,
+      close() {}
+    });
+    const abort = new AbortController();
+    const reason = new Error('cancelled upload');
+    const init = { method: 'POST', body, duplex: 'half' as const, signal: abort.signal };
+    const rejected = expect(http.fetch('/', init)).rejects.toBe(reason);
+
+    await reading.promise;
+    abort.abort(reason);
+    await rejected;
+    expect(cancelled).toHaveBeenCalledWith(reason);
+    expect(pair.clientRecord.reset).toBe(true);
+    await vi.waitFor(() => expect(body.locked).toBe(false));
+  });
+
+  it('abandons a stalled write and observes its late failure', async () => {
+    const pair = createStreamPair();
+    const writing = Promise.withResolvers<void>();
+    const write = vi.spyOn(pair.client, 'write').mockImplementationOnce(() => writing.promise);
+    const openStream = async () => pair.client;
+    const http = new IrohHttpClient({
+      remoteId: () => peer.endpointId,
+      openStream,
+      acceptStream: openStream,
+      close() {}
+    });
+    const abort = new AbortController();
+    const reason = new Error('cancelled write');
+    const rejected = expect(http.fetch('/', { signal: abort.signal })).rejects.toBe(reason);
+
+    await vi.waitFor(() => expect(write).toHaveBeenCalled());
+    abort.abort(reason);
+    await rejected;
+    expect(pair.clientRecord.reset).toBe(true);
+    writing.reject(new Error('late write failure'));
+    await writing.promise.catch(() => undefined);
+  });
+
+  it('cancels a stalled upload when the response head fails', async () => {
+    const pair = createStreamPair();
+    const reading = Promise.withResolvers<void>();
+    const cancelled = vi.fn(async () => {
+      throw new Error('source cancellation failed');
+    });
+    const body = new ReadableStream<Uint8Array>(
+      { pull: () => reading.resolve(), cancel: cancelled },
+      { highWaterMark: 0 }
+    );
+    const openStream = async () => pair.client;
+    const http = new IrohHttpClient({
+      remoteId: () => peer.endpointId,
+      openStream,
+      acceptStream: openStream,
+      close() {}
+    });
+    const init = { method: 'POST', body, duplex: 'half' as const };
+    const rejected = expect(http.fetch('/', init)).rejects.toThrow(/out of range/);
+
+    await reading.promise;
+    await pair.server.write(headFrame(encoder.encode(JSON.stringify({ status: 999, headers: [] }))));
+    await rejected;
+    expect(cancelled).toHaveBeenCalledWith(expect.any(Error));
+    expect(pair.clientRecord.reset).toBe(true);
+    await vi.waitFor(() => expect(body.locked).toBe(false));
+  });
+
+  it.each([204, 205, 304])('aborts while draining a bodyless %i response', async status => {
+    const pair = createStreamPair();
+    const openStream = async () => pair.client;
+    const http = new IrohHttpClient({
+      remoteId: () => peer.endpointId,
+      openStream,
+      acceptStream: openStream,
+      close() {}
+    });
+    const abort = new AbortController();
+    const reason = new Error('cancel bodyless drain');
+    const rejected = expect(http.fetch('/', { signal: abort.signal })).rejects.toBe(reason);
+
+    await pair.server.write(headFrame(encoder.encode(JSON.stringify({ status, headers: [] }))));
+    // Let the head arrive; no END frame follows, so completion stays pending.
+    await new Promise(resolve => setImmediate(resolve));
+    abort.abort(reason);
+    await rejected;
+    expect(pair.clientRecord.reset).toBe(true);
+  });
+
+  it.each([new Error('cancelled body'), 'watch closed', 0])(
+    'rejects pending and future body reads with %s',
+    async reason => {
+      const pair = createStreamPair();
+      const body = new TransformStream<Uint8Array, Uint8Array>();
+      const writer = body.writable.getWriter();
+      const serving = writeResponse(pair.server, new Response(body.readable));
+      const openStream = async () => pair.client;
+      const http = new IrohHttpClient({
+        remoteId: () => peer.endpointId,
+        openStream,
+        acceptStream: openStream,
+        close() {}
+      });
+      const abort = new AbortController();
+
+      try {
+        const response = await http.fetch('/', { signal: abort.signal });
+        const reader = response.body!.getReader();
+        await writer.write(encoder.encode('first'));
+        expect((await reader.read()).value).toEqual(encoder.encode('first'));
+        const rejected = expect(reader.read()).rejects.toBe(reason);
+        abort.abort(reason);
+        await rejected;
+        await expect(reader.read()).rejects.toBe(reason);
+        expect(pair.clientRecord.reset).toBe(true);
+      } finally {
+        await writer.close();
+        await serving;
+      }
+    }
+  );
+
+  it('discards buffered response bytes on abort', async () => {
+    const pair = createStreamPair();
+    const body = new TransformStream<Uint8Array, Uint8Array>();
+    const writer = body.writable.getWriter();
+    const serving = writeResponse(pair.server, new Response(body.readable));
+    const openStream = async () => pair.client;
+    const http = new IrohHttpClient({
+      remoteId: () => peer.endpointId,
+      openStream,
+      acceptStream: openStream,
+      close() {}
+    });
+    const abort = new AbortController();
+    const reason = new Error('discard queued data');
+
+    try {
+      const response = await http.fetch('/', { signal: abort.signal });
+      await writer.write(encoder.encode('buffered'));
+      await new Promise(resolve => setImmediate(resolve));
+      abort.abort(reason);
+      await expect(response.body!.getReader().read()).rejects.toBe(reason);
+    } finally {
+      await writer.close();
+      await serving;
+    }
+  });
+
+  it.each(['end', 'cancel', 'error', 'bodyless'])(
+    'removes abort listeners when the response reaches %s',
+    async outcome => {
+      // Exercise all terminal paths, including responses that forbid a body.
+      const pair = createStreamPair();
+      const openStream = async () => pair.client;
+      const http = new IrohHttpClient({
+        remoteId: () => peer.endpointId,
+        openStream,
+        acceptStream: openStream,
+        close() {}
+      });
+      const signalGetter = vi.spyOn(Request.prototype, 'signal', 'get');
+      const abort = new AbortController();
+
+      try {
+        // Finish or cancel the response, then verify a later abort is inert.
+        const pending = http.fetch('/', { signal: abort.signal });
+        const requestSignal: AbortSignal = signalGetter.mock.results[0].value;
+        await writeResponse(
+          pair.server,
+          new Response(outcome === 'bodyless' ? null : 'ok', { status: outcome === 'bodyless' ? 204 : 200 })
+        );
+        const response = await pending;
+        if (outcome === 'cancel') await response.body!.cancel();
+        else if (outcome === 'error') {
+          await pair.client.reset();
+          await expect(response.text()).rejects.toThrow();
+        } else await response.text();
+
+        await vi.waitFor(() => expect(getEventListeners(requestSignal, 'abort')).toHaveLength(0));
+        abort.abort();
+        if (outcome !== 'error') expect(pair.clientRecord.reset).toBe(false);
+      } finally {
+        signalGetter.mockRestore();
+      }
+    }
+  );
+
+  it('keeps cancellation active when the response ends before the upload', async () => {
+    const pair = createStreamPair();
+    const reading = Promise.withResolvers<void>();
+    const cancelled = vi.fn();
+    const body = new ReadableStream<Uint8Array>(
+      { pull: () => reading.resolve(), cancel: cancelled },
+      { highWaterMark: 0 }
+    );
+    const openStream = async () => pair.client;
+    const http = new IrohHttpClient({
+      remoteId: () => peer.endpointId,
+      openStream,
+      acceptStream: openStream,
+      close() {}
+    });
+    const abort = new AbortController();
+    const reason = new Error('cancel remaining upload');
+    const init = { method: 'POST', body, duplex: 'half' as const, signal: abort.signal };
+    const pending = http.fetch('/', init);
+    await reading.promise;
+    await writeResponse(pair.server, new Response('early response'));
+    await expect((await pending).text()).resolves.toBe('early response');
+
+    abort.abort(reason);
+    expect(cancelled).toHaveBeenCalledWith(reason);
+    expect(pair.clientRecord.reset).toBe(true);
+    await vi.waitFor(() => expect(body.locked).toBe(false));
+  });
+});
 
 /** Frame a raw head payload, bypassing the encoder's own validation. */
 function headFrame(payload: Uint8Array): Uint8Array {

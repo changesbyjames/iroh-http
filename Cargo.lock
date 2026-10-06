@@ -1459,7 +1459,7 @@ dependencies = [
 
 [[package]]
 name = "iroh-http"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "bytes",
  "http",
@@ -1477,7 +1477,7 @@ dependencies = [
 
 [[package]]
 name = "iroh-http-browser"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "console_error_panic_hook",
  "getrandom 0.3.4",

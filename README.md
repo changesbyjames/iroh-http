@@ -108,6 +108,11 @@ const response = await client.fetch('/ping');
 console.log(await response.text());
 ```
 
+`client.fetch()` accepts an abort signal through `RequestInit.signal` or a
+`Request`. Aborting rejects a pending fetch or response-body read with the
+signal's reason and resets that exchange; other requests on the connection
+remain usable. This also applies to the browser client.
+
 `serve()` owns the endpoint's accept loop. Disposing it stops accepting, closes
 active connections, and closes the endpoint. The server's `closed` promise
 resolves once the listener closes, without waiting for in-flight exchanges, and

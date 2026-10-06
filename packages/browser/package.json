@@ -1,6 +1,6 @@
 {
   "name": "@strangecyan/iroh-http-browser",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "HTTP over Iroh in browsers via WebAssembly.",
   "keywords": [
     "browser",
