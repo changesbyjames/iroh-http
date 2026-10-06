@@ -1,0 +1,16 @@
+{
+  "$schema": "./node_modules/oxfmt/configuration_schema.json",
+  "tabWidth": 2,
+  "useTabs": false,
+  "arrowParens": "avoid",
+  "printWidth": 120,
+  "bracketSpacing": true,
+  "semi": true,
+  "singleQuote": true,
+  "jsxSingleQuote": false,
+  "quoteProps": "as-needed",
+  "trailingComma": "none",
+  "bracketSameLine": false,
+  "ignorePatterns": ["**/dist/**", "node_modules/**", "target/**", "tools/**", "packages/browser/src/wasm/**"],
+  "sortPackageJson": false
+}

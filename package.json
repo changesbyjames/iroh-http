@@ -1,0 +1,38 @@
+{
+  "name": "iroh-http",
+  "version": "0.1.0",
+  "private": true,
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/changesbyjames/iroh-http.git"
+  },
+  "type": "module",
+  "scripts": {
+    "build": "pnpm -r --filter './packages/*' build",
+    "cargo:build": "cargo build --workspace --examples",
+    "cargo:check": "cargo clippy --workspace --all-targets -- -D warnings",
+    "cargo:fmt": "cargo fmt --all --check",
+    "cargo:package": "cargo publish --dry-run --allow-dirty --package iroh-http",
+    "cargo:test": "cargo test --workspace",
+    "check": "pnpm format:check && pnpm lint && pnpm typecheck",
+    "format": "oxfmt",
+    "format:check": "oxfmt --check",
+    "lint": "oxlint",
+    "typecheck": "pnpm -r typecheck",
+    "publish:dry-run": "pnpm -r --filter './packages/*' publish --dry-run --no-git-checks",
+    "publish:check": "pnpm publish:dry-run && pnpm cargo:package",
+    "ready": "pnpm cargo:fmt && pnpm cargo:check && pnpm cargo:test && pnpm build && pnpm check && pnpm publish:check && pnpm test",
+    "release:check": "node scripts/check-release.mjs",
+    "test": "pnpm cargo:build && pnpm --filter e2e test"
+  },
+  "devDependencies": {
+    "@oxlint/plugins": "^1.78.0",
+    "oxfmt": "^0.63.0",
+    "oxlint": "^1.78.0",
+    "typescript": "^6.0.3"
+  },
+  "engines": {
+    "node": ">=22.18.0"
+  },
+  "packageManager": "pnpm@10.22.0"
+}

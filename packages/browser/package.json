@@ -1,0 +1,51 @@
+{
+  "name": "@strangecyan/iroh-http-browser",
+  "version": "0.1.0",
+  "description": "HTTP over Iroh in browsers via WebAssembly.",
+  "keywords": [
+    "browser",
+    "fetch",
+    "http",
+    "iroh",
+    "webassembly"
+  ],
+  "homepage": "https://github.com/changesbyjames/iroh-http#readme",
+  "bugs": "https://github.com/changesbyjames/iroh-http/issues",
+  "license": "MIT OR Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/changesbyjames/iroh-http.git",
+    "directory": "packages/browser"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE",
+    "LICENSE-APACHE",
+    "LICENSE-MIT"
+  ],
+  "type": "module",
+  "sideEffects": false,
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "build": "node scripts/build-wasm.ts && tsc -p tsconfig.build.json",
+    "typecheck": "tsc -p tsconfig.json && tsc -p scripts/tsconfig.json"
+  },
+  "dependencies": {
+    "@strangecyan/iroh-http-core": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "^25.6.2",
+    "typescript": "^6.0.3"
+  }
+}

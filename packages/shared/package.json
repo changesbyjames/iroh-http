@@ -1,0 +1,49 @@
+{
+  "name": "@strangecyan/iroh-http-core",
+  "version": "0.1.0",
+  "description": "Shared wire protocol for HTTP over Iroh.",
+  "keywords": [
+    "fetch",
+    "http",
+    "iroh",
+    "quic",
+    "transport"
+  ],
+  "homepage": "https://github.com/changesbyjames/iroh-http#readme",
+  "bugs": "https://github.com/changesbyjames/iroh-http/issues",
+  "license": "MIT OR Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/changesbyjames/iroh-http.git",
+    "directory": "packages/shared"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE",
+    "LICENSE-APACHE",
+    "LICENSE-MIT"
+  ],
+  "type": "module",
+  "sideEffects": false,
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "build": "rm -rf dist && tsc -p tsconfig.build.json",
+    "dev": "tsc -p tsconfig.build.json --watch",
+    "typecheck": "tsc -p tsconfig.json"
+  },
+  "devDependencies": {
+    "@types/node": "^25.6.2",
+    "typescript": "^6.0.3"
+  }
+}

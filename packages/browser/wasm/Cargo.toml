@@ -1,0 +1,24 @@
+[package]
+name = "iroh-http-browser"
+description = "Browser Iroh endpoint and byte streams for HTTP over Iroh."
+publish = false
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+console_error_panic_hook = "0.1.7"
+getrandom = { version = "0.3", features = ["wasm_js"] }
+iroh = { workspace = true, default-features = false, features = ["tls-ring"] }
+iroh-tickets.workspace = true
+tokio = { workspace = true, features = ["macros"] }
+wasm-bindgen = "=0.2.122"
+wasm-bindgen-futures = "0.4.50"
+
+[package.metadata.wasm-pack.profile.release]
+wasm-opt = ["-Os", "--enable-bulk-memory", "--enable-nontrapping-float-to-int"]

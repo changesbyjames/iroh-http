@@ -1,0 +1,105 @@
+name: Publish release
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    if: ${{ !github.event.release.prerelease }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: pnpm
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+          components: clippy, rustfmt
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Install wasm-pack
+        uses: taiki-e/install-action@v2
+        with:
+          tool: wasm-pack@0.15.0
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Check release tag and versions
+        run: pnpm release:check "${RELEASE_TAG}"
+        env:
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+
+      - name: Run release gate
+        run: pnpm ready
+
+      - name: Upload npm packages
+        uses: actions/upload-artifact@v4
+        with:
+          name: npm-packages
+          path: packages/*/dist
+          if-no-files-found: error
+
+  npm:
+    name: Publish npm packages
+    needs: validate
+    runs-on: ubuntu-latest
+    environment: npm
+    # Provenance needs an OIDC token; only the publishing job may request one.
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          registry-url: https://registry.npmjs.org
+          cache: pnpm
+
+      # Links the workspace so `pnpm publish` can resolve `workspace:*`
+      # dependencies. Runs before the download so the built `dist` artifacts
+      # are left untouched; scripts are skipped as nothing needs rebuilding.
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile --ignore-scripts
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: npm-packages
+          path: packages
+
+      # Publishes in dependency order, core first, rewriting `workspace:*`
+      # dependencies to the release version.
+      - name: Publish npm packages
+        run: pnpm -r --filter './packages/*' publish --access public --no-git-checks
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          NPM_CONFIG_PROVENANCE: 'true'
+
+  crates-io:
+    name: Publish Rust crate
+    needs: validate
+    runs-on: ubuntu-latest
+    environment: crates-io
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Publish iroh-http
+        run: cargo publish --package iroh-http
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
