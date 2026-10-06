@@ -212,8 +212,9 @@ suite.
 
 The local suites disable relays so they run offline over the loopback path.
 
-GitHub Releases publish all three npm packages and the `iroh-http` Rust crate.
-See [RELEASING.md](./RELEASING.md) for registry setup and the release checklist.
+GitHub Releases publish all three npm packages. Publishing the `iroh-http` Rust
+crate is optional. See [RELEASING.md](./RELEASING.md) for registry setup and the
+release checklist.
 
 ## Status
 

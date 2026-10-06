@@ -45,11 +45,20 @@ jobs:
       - name: Run release gate
         run: pnpm ready
 
+      # pnpm rewrites workspace dependencies when packing. npm publishes the
+      # resulting tarballs directly so its CLI handles OIDC authentication.
+      - name: Pack npm packages
+        run: |
+          mkdir -p "${RUNNER_TEMP}/npm-packages"
+          for package in shared node browser; do
+            pnpm --dir "packages/${package}" pack --out "${RUNNER_TEMP}/npm-packages/${package}.tgz"
+          done
+
       - name: Upload npm packages
         uses: actions/upload-artifact@v4
         with:
           name: npm-packages
-          path: packages/*/dist
+          path: ${{ runner.temp }}/npm-packages/*.tgz
           if-no-files-found: error
 
   npm:
@@ -57,43 +66,43 @@ jobs:
     needs: validate
     runs-on: ubuntu-latest
     environment: npm
-    # Provenance needs an OIDC token; only the publishing job may request one.
+    # npm trusted publishing uses OIDC; only this job may request a token.
     permissions:
       contents: read
       id-token: write
     steps:
       - uses: actions/checkout@v4
 
-      - uses: pnpm/action-setup@v4
-
       - uses: actions/setup-node@v4
         with:
           node-version: '24'
-          registry-url: https://registry.npmjs.org
-          cache: pnpm
 
-      # Links the workspace so `pnpm publish` can resolve `workspace:*`
-      # dependencies. Runs before the download so the built `dist` artifacts
-      # are left untouched; scripts are skipped as nothing needs rebuilding.
-      - name: Install dependencies
-        run: pnpm install --frozen-lockfile --ignore-scripts
+      - name: Install npm with trusted publishing support
+        run: npm install --global npm@11.19.0
 
       - uses: actions/download-artifact@v4
         with:
           name: npm-packages
-          path: packages
+          path: ${{ runner.temp }}/npm-packages
 
-      # Publishes in dependency order, core first, rewriting `workspace:*`
-      # dependencies to the release version.
-      - name: Publish npm packages
-        run: pnpm -r --filter './packages/*' publish --access public --no-git-checks
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-          NPM_CONFIG_PROVENANCE: 'true'
+      # Core goes first. On a partial-release retry, leave published versions
+      # intact and continue with the remaining packages.
+      - name: Publish npm packages with OIDC
+        run: |
+          for package in shared node browser; do
+            name=$(node -p "require('./packages/${package}/package.json').name")
+            version=$(node -p "require('./packages/${package}/package.json').version")
+            if npm view "${name}@${version}" version --registry https://registry.npmjs.org >/dev/null 2>&1; then
+              echo "${name}@${version} is already published; skipping"
+              continue
+            fi
+            npm publish "${RUNNER_TEMP}/npm-packages/${package}.tgz" --access public --provenance --registry https://registry.npmjs.org
+          done
 
   crates-io:
     name: Publish Rust crate
     needs: validate
+    if: ${{ vars.PUBLISH_CRATE == 'true' }}
     runs-on: ubuntu-latest
     environment: crates-io
     steps:
