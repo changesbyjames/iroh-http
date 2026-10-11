@@ -110,9 +110,10 @@ export const handler: Handler = (request, peer) => {
  * Assertions every peer pairing must satisfy.
  *
  * `peerId` is the endpoint id the *server* should see, which is the dialling
- * endpoint's id.
+ * endpoint's id. `inBrowser` skips what the Fetch standard forbids a page to
+ * observe, whichever implementation is at either end.
  */
-export function conformance(client: () => ConformanceClient, peerId: () => string): void {
+export function conformance(client: () => ConformanceClient, peerId: () => string, inBrowser = false): void {
   it('round trips a status, headers, and a body', async () => {
     const response = await client().fetch('/ping');
 
@@ -175,7 +176,8 @@ export function conformance(client: () => ConformanceClient, peerId: () => strin
     expect(pairs.map(([name]) => name)).not.toContain('connection');
   });
 
-  it('keeps repeated response headers separate', async () => {
+  // Browsers drop `set-cookie` from every `Response` a page constructs.
+  it.skipIf(inBrowser)('keeps repeated response headers separate', async () => {
     const response = await client().fetch('/cookies');
 
     // `getSetCookie` is the only way to observe repeated values faithfully.

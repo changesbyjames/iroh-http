@@ -146,6 +146,14 @@ impl IrohHttpIncoming {
             .ok_or_else(|| JsError::new("Incoming connection was already accepted"))?;
         Ok(IrohHttpConnection(incoming.await.map_err(to_js_error)?))
     }
+
+    /// Refuse the connection, telling the peer instead of letting it time out.
+    /// Does nothing once the handshake has been started or refused.
+    pub fn refuse(&self) {
+        if let Some(incoming) = self.0.take() {
+            incoming.refuse();
+        }
+    }
 }
 
 /// An active Iroh connection carrying HTTP exchanges.

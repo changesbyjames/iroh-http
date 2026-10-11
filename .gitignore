@@ -29,3 +29,7 @@ packages/browser/src/wasm
 # AI agent worktrees
 .claude/worktrees/
 *.tsbuildinfo
+
+# Vitest browser mode failure artifacts
+__screenshots__/
+.vitest-attachments/
