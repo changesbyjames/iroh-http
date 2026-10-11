@@ -25,12 +25,22 @@
     "LICENSE-MIT"
   ],
   "type": "module",
-  "sideEffects": false,
+  "sideEffects": [
+    "./dist/shared-worker.js"
+  ],
   "types": "./dist/index.d.ts",
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
+    },
+    "./shared": {
+      "types": "./dist/shared.d.ts",
+      "import": "./dist/shared.js"
+    },
+    "./shared-worker": {
+      "types": "./dist/shared-worker.d.ts",
+      "import": "./dist/shared-worker.js"
     },
     "./package.json": "./package.json"
   },
