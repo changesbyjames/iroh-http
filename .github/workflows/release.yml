@@ -42,6 +42,10 @@ jobs:
         env:
           RELEASE_TAG: ${{ github.event.release.tag_name }}
 
+      # The browser suite in the release gate runs in Chromium.
+      - name: Install Chromium
+        run: pnpm --filter e2e exec playwright install --with-deps chromium
+
       - name: Run release gate
         run: pnpm ready
 
