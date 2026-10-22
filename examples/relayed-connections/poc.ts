@@ -8,7 +8,7 @@
  *
  *   node poc.ts
  *
- * Set IROH_RELAY_BIN to the iroh-relay binary (built from the iroh fork) if it is not at the default path.
+ * It runs `iroh-relay` from the PATH; set IROH_RELAY_BIN to use another binary.
  */
 
 import { spawn, type ChildProcess } from 'node:child_process';
@@ -33,7 +33,7 @@ interface Allowance {
 const here = (path: string) => fileURLToPath(new URL(path, import.meta.url));
 
 const RELAY_URL = 'http://127.0.0.1:3340';
-const RELAY_BIN = process.env.IROH_RELAY_BIN ?? here('../../../../forks/iroh/target/release/iroh-relay');
+const RELAY_BIN = process.env.IROH_RELAY_BIN ?? 'iroh-relay';
 
 /** How long a peer gets to holepunch before its paths are read. */
 const SETTLE_MS = 5_000;

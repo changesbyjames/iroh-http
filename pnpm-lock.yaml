@@ -4,9 +4,6 @@ settings:
   autoInstallPeers: true
   excludeLinksFromLockfile: false
 
-overrides:
-  '@number0/iroh': link:../../forks/iroh-ffi/iroh-js
-
 importers:
 
   .:
@@ -27,8 +24,8 @@ importers:
   e2e:
     dependencies:
       '@number0/iroh':
-        specifier: link:../../../forks/iroh-ffi/iroh-js
-        version: link:../../../forks/iroh-ffi/iroh-js
+        specifier: npm:@strangecyan/iroh@1.1.0-relayed.1
+        version: '@strangecyan/iroh@1.1.0-relayed.1'
       '@strangecyan/iroh-http-browser':
         specifier: workspace:*
         version: link:../packages/browser
@@ -58,8 +55,8 @@ importers:
   examples/relayed-connections:
     dependencies:
       '@number0/iroh':
-        specifier: link:../../../../forks/iroh-ffi/iroh-js
-        version: link:../../../../forks/iroh-ffi/iroh-js
+        specifier: npm:@strangecyan/iroh@1.1.0-relayed.1
+        version: '@strangecyan/iroh@1.1.0-relayed.1'
       '@strangecyan/iroh-http-node':
         specifier: workspace:*
         version: link:../../packages/node
@@ -87,8 +84,8 @@ importers:
   packages/node:
     dependencies:
       '@number0/iroh':
-        specifier: link:../../../../forks/iroh-ffi/iroh-js
-        version: link:../../../../forks/iroh-ffi/iroh-js
+        specifier: npm:@strangecyan/iroh@1.1.0-relayed.1
+        version: '@strangecyan/iroh@1.1.0-relayed.1'
       '@strangecyan/iroh-http-core':
         specifier: workspace:*
         version: link:../shared
@@ -450,6 +447,46 @@ packages:
 
   '@standard-schema/spec@1.1.0':
     resolution: {integrity: sha512-l2aFy5jALhniG5HgqrD6jXLi/rUWrKvqN/qJx6yoJsgKhblVd+iqqU4RCXavm/jPityDo5TCvKMnpjKnOriy0w==}
+
+  '@strangecyan/iroh-darwin-arm64@1.1.0-relayed.1':
+    resolution: {integrity: sha512-iH0fUVUJoAU9YRJ3Pl8MRt8LgBMppw1k76fFaAFlUr8V6WujqaYOdevSnQ1htQ6uUtpuNVcAbshiyU0Lanphgw==}
+    engines: {node: '>= 20.3.0'}
+    cpu: [arm64]
+    os: [darwin]
+
+  '@strangecyan/iroh-linux-arm64-gnu@1.1.0-relayed.1':
+    resolution: {integrity: sha512-0EmUv1zXYZ/lvB/eGZvkXiCDWweE5CT5JgyiY63RZdr8GBJGGLvOovGmjXyqf7NMp/j+v/RAIgoc0L9GwUk6Pw==}
+    engines: {node: '>= 20.3.0'}
+    cpu: [arm64]
+    os: [linux]
+
+  '@strangecyan/iroh-linux-arm64-musl@1.1.0-relayed.1':
+    resolution: {integrity: sha512-IMux5lzKjh0a+C+/ELhIEr5C49/AdvKEazS3Sa9XLqfmR3knnSHXqp1Wt6yC0NiiCILTclIVH+f5Y9cUUOGQXQ==}
+    engines: {node: '>= 20.3.0'}
+    cpu: [arm64]
+    os: [linux]
+
+  '@strangecyan/iroh-linux-x64-gnu@1.1.0-relayed.1':
+    resolution: {integrity: sha512-TogoFnusZ+rirn2FsstIJUxdE9bCkA7X5Hzqqea3PMn1tucMSjMJU/4c5hEPVA7RPLzIwNg1RNzR21p7UfOZVg==}
+    engines: {node: '>= 20.3.0'}
+    cpu: [x64]
+    os: [linux]
+
+  '@strangecyan/iroh-linux-x64-musl@1.1.0-relayed.1':
+    resolution: {integrity: sha512-1Sf66Gcma3i7Aa167IZnXoOVGU8Fip8Ku5OGpxAfRi1P0wudvJAlw40xatoeSNwrTEnfOgHBJUFteub5XSr6uA==}
+    engines: {node: '>= 20.3.0'}
+    cpu: [x64]
+    os: [linux]
+
+  '@strangecyan/iroh-win32-x64-msvc@1.1.0-relayed.1':
+    resolution: {integrity: sha512-q4zSN5LKwGc6NIDiRvODwCsmux2cSdYhlHFxN8zcen5W3WOBOMfsyEgRE2JeKyC5s9K2a2uEOfEtlt3KmF8K7Q==}
+    engines: {node: '>= 20.3.0'}
+    cpu: [x64]
+    os: [win32]
+
+  '@strangecyan/iroh@1.1.0-relayed.1':
+    resolution: {integrity: sha512-o1+r+WD3kdl9oii0DhOp9iNZq2FKSSto3rsRh/3kFLwhOKe7TOpS2RZRe0bDoTwbScy+Lup8fa5Hb9LPiKr/yA==}
+    engines: {node: '>= 20.3.0'}
 
   '@types/chai@5.2.3':
     resolution: {integrity: sha512-Mw558oeA9fFbv65/y4mHtXDs9bPnFMZAL/jxdPFUpOHHIXX91mcgEHbS5Lahr+pwZFR8A7GQleRWeI6cGFC2UA==}
@@ -1010,6 +1047,33 @@ snapshots:
   '@rolldown/pluginutils@1.0.1': {}
 
   '@standard-schema/spec@1.1.0': {}
+
+  '@strangecyan/iroh-darwin-arm64@1.1.0-relayed.1':
+    optional: true
+
+  '@strangecyan/iroh-linux-arm64-gnu@1.1.0-relayed.1':
+    optional: true
+
+  '@strangecyan/iroh-linux-arm64-musl@1.1.0-relayed.1':
+    optional: true
+
+  '@strangecyan/iroh-linux-x64-gnu@1.1.0-relayed.1':
+    optional: true
+
+  '@strangecyan/iroh-linux-x64-musl@1.1.0-relayed.1':
+    optional: true
+
+  '@strangecyan/iroh-win32-x64-msvc@1.1.0-relayed.1':
+    optional: true
+
+  '@strangecyan/iroh@1.1.0-relayed.1':
+    optionalDependencies:
+      '@strangecyan/iroh-darwin-arm64': 1.1.0-relayed.1
+      '@strangecyan/iroh-linux-arm64-gnu': 1.1.0-relayed.1
+      '@strangecyan/iroh-linux-arm64-musl': 1.1.0-relayed.1
+      '@strangecyan/iroh-linux-x64-gnu': 1.1.0-relayed.1
+      '@strangecyan/iroh-linux-x64-musl': 1.1.0-relayed.1
+      '@strangecyan/iroh-win32-x64-msvc': 1.1.0-relayed.1
 
   '@types/chai@5.2.3':
     dependencies:

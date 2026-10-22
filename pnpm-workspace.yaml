@@ -2,8 +2,3 @@ packages:
   - packages/*
   - e2e
   - examples/*
-
-# The iroh-ffi fork's Node binding, built locally (`yarn build` in iroh-js), which adds
-# Incoming.acceptWithoutNatTraversal(). See examples/relayed-connections.
-overrides:
-  '@number0/iroh': link:../../forks/iroh-ffi/iroh-js

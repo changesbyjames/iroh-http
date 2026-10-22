@@ -8,7 +8,7 @@
     "typecheck": "tsc -p tsconfig.json"
   },
   "dependencies": {
-    "@number0/iroh": "1.0.0",
+    "@number0/iroh": "npm:@strangecyan/iroh@1.1.0-relayed.1",
     "@strangecyan/iroh-http-node": "workspace:*"
   },
   "devDependencies": {

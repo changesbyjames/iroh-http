@@ -17,15 +17,12 @@ violation: the connection cannot leave the relay.
 
 ## Running it
 
-It needs two forks, cloned beside this repository's parent (`~/Developer/forks`):
+`Incoming.acceptWithoutNatTraversal()` comes from [`@strangecyan/iroh`](https://www.npmjs.com/package/@strangecyan/iroh),
+a fork of the Node binding built on [an iroh fork](https://github.com/changesbyjames/iroh/tree/relayed-connections) that
+adds `QuicTransportConfigBuilder::disable_nat_traversal()`. This repository aliases `@number0/iroh` to it.
 
-- [changesbyjames/iroh](https://github.com/changesbyjames/iroh/tree/relayed-connections): adds
-  `QuicTransportConfigBuilder::disable_nat_traversal()`. Build the relay with
-  `cargo build --release -p iroh-relay --features server --bin iroh-relay`.
-- [changesbyjames/iroh-ffi](https://github.com/changesbyjames/iroh-ffi/tree/relayed-connections): adds
-  `Incoming.acceptWithoutNatTraversal()` to the Node binding. Build it with `yarn install && yarn build` in `iroh-js`.
-
-The workspace overrides `@number0/iroh` with that local build. Then:
+The relay is unchanged, so any `iroh-relay` 1.x works: `cargo install iroh-relay --features server`, or set
+`IROH_RELAY_BIN` to a binary. Then:
 
 ```sh
 pnpm install
@@ -33,6 +30,6 @@ pnpm --filter @strangecyan/iroh-http-node build
 pnpm --filter relayed-connections start
 ```
 
-Set `IROH_RELAY_BIN` if the relay binary is elsewhere. The script prints, per peer, the admission decision, the
+The script prints, per peer, the admission decision, the
 response, the selected path and any of the agent's addresses the peer learned, and exits non-zero if a peer did not
 behave as the list allows.
