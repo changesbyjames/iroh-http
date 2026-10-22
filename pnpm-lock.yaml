@@ -24,8 +24,8 @@ importers:
   e2e:
     dependencies:
       '@number0/iroh':
-        specifier: 1.0.0
-        version: 1.0.0
+        specifier: npm:@strangecyan/iroh@1.1.0-relayed.1
+        version: '@strangecyan/iroh@1.1.0-relayed.1'
       '@strangecyan/iroh-http-browser':
         specifier: workspace:*
         version: link:../packages/browser
@@ -52,6 +52,22 @@ importers:
         specifier: ^4.1.10
         version: 4.1.11(@types/node@25.9.9)(@vitest/browser-playwright@4.1.11)(vite@8.3.3(@types/node@25.9.9))
 
+  examples/relayed-connections:
+    dependencies:
+      '@number0/iroh':
+        specifier: npm:@strangecyan/iroh@1.1.0-relayed.1
+        version: '@strangecyan/iroh@1.1.0-relayed.1'
+      '@strangecyan/iroh-http-node':
+        specifier: workspace:*
+        version: link:../../packages/node
+    devDependencies:
+      '@types/node':
+        specifier: ^25.6.2
+        version: 25.9.9
+      typescript:
+        specifier: ^6.0.3
+        version: 6.0.3
+
   packages/browser:
     dependencies:
       '@strangecyan/iroh-http-core':
@@ -68,8 +84,8 @@ importers:
   packages/node:
     dependencies:
       '@number0/iroh':
-        specifier: 1.0.0
-        version: 1.0.0
+        specifier: npm:@strangecyan/iroh@1.1.0-relayed.1
+        version: '@strangecyan/iroh@1.1.0-relayed.1'
       '@strangecyan/iroh-http-core':
         specifier: workspace:*
         version: link:../shared
@@ -97,76 +113,6 @@ packages:
 
   '@jridgewell/sourcemap-codec@1.6.0':
     resolution: {integrity: sha512-T7jf+5zgsZHwNJ4lvQ7/aezbyk0nNX+zJVWpmHA7VYsEx7a7qr5Rg5IbtJFqkgze5Y2sruq1RUY8Q837Od7iFw==}
-
-  '@number0/iroh-android-arm-eabi@1.0.0':
-    resolution: {integrity: sha512-AkrdmoQ2YhC+X0JgD14SNE+KOSGLKC8z5HSWnPY5tvSXrASPbwCtvWFCVmyPKWj2kQHv0blMI5lBGeGFe+v54w==}
-    engines: {node: '>= 10'}
-    cpu: [arm]
-    os: [android]
-
-  '@number0/iroh-android-arm64@1.0.0':
-    resolution: {integrity: sha512-EkZh6hl5XJ1JQlWWANc2yDdScP5yGbi9IlF9bttd4DuUelAI8yqEMzXq4YdPB0kQqPlmPk8nEGLEtPWbVCNTLg==}
-    engines: {node: '>= 10'}
-    cpu: [arm64]
-    os: [android]
-
-  '@number0/iroh-darwin-arm64@1.0.0':
-    resolution: {integrity: sha512-zmf9CE1l6TWy9zDlNs3EvcxPxHfVQKvkod7wuF6llkGi/2WaSRc+x1vaaMEfpguaxnRfP4NNvIKyy8Ni4imIQg==}
-    engines: {node: '>= 10'}
-    cpu: [arm64]
-    os: [darwin]
-
-  '@number0/iroh-linux-arm-gnueabihf@1.0.0':
-    resolution: {integrity: sha512-obp3eZIJrOGD0rUL1Y0SSCFUNa6NQAsZS+z2khmurqD/rOIIjzvVNYakS4+MEWQLzF1acuUvN7aprHAceUkiuQ==}
-    engines: {node: '>= 10'}
-    cpu: [arm]
-    os: [linux]
-
-  '@number0/iroh-linux-arm-musleabihf@1.0.0':
-    resolution: {integrity: sha512-5OXTzmdej7CPaQCReg3vf0/jDCRdVgiOsbC0gcyoPBOdNPs7tZgSoXRBQsod7ioObrjegPM2UfvdF+bIyGst4Q==}
-    engines: {node: '>= 10'}
-    cpu: [arm]
-    os: [linux]
-
-  '@number0/iroh-linux-arm64-gnu@1.0.0':
-    resolution: {integrity: sha512-whQ36eFP+9aYRJxpZn/Q35EVlvEJm45AFSO2mfctVYvZFJKC/YjZWue4p60VWuW4/yBdjBTErwUum5mMppoeLQ==}
-    engines: {node: '>= 10'}
-    cpu: [arm64]
-    os: [linux]
-
-  '@number0/iroh-linux-arm64-musl@1.0.0':
-    resolution: {integrity: sha512-Xb4Yy9I2MXlv2SeZZcEIkJIgG1do+5F4R5GkXb4L0if/5vTuuKj7KGQE/ehaIJjNcv+TE+KIOhUvGCxO02l7Nw==}
-    engines: {node: '>= 10'}
-    cpu: [arm64]
-    os: [linux]
-
-  '@number0/iroh-linux-x64-gnu@1.0.0':
-    resolution: {integrity: sha512-ZOOWURPAWhnBmj5ElLaB/wCjoWNdrjOblaOs0YViW+dlTc5qwInSGJdYEDRdSoZ61MIP0gI2H9EwENe8UYWRcg==}
-    engines: {node: '>= 10'}
-    cpu: [x64]
-    os: [linux]
-
-  '@number0/iroh-linux-x64-musl@1.0.0':
-    resolution: {integrity: sha512-sJzuehJ9BnuZe4lnP6cWA1wDedC+rbOiI/Hu4V9BGTUE50Z/s28rXDQFJCqVWz1qseXCqHYQ/Jt3U1XdX+Gmtw==}
-    engines: {node: '>= 10'}
-    cpu: [x64]
-    os: [linux]
-
-  '@number0/iroh-win32-arm64-msvc@1.0.0':
-    resolution: {integrity: sha512-7KgpUvinndcJnQgbYdV0zs7nGTxKi9zZDBxyTX9PRlQm/9TfTDZhSkur+sZYW2xca2P31XGkjZYZ78yAjYviqQ==}
-    engines: {node: '>= 10'}
-    cpu: [arm64]
-    os: [win32]
-
-  '@number0/iroh-win32-x64-msvc@1.0.0':
-    resolution: {integrity: sha512-mNgHds9US3IWfrvZn+yBuyE/kjrM//jSFpWn1llu3aiNgGq8Rf7yW2TJWvmrFT+eeTi2osOsh1nJfykXTe9xYQ==}
-    engines: {node: '>= 10'}
-    cpu: [x64]
-    os: [win32]
-
-  '@number0/iroh@1.0.0':
-    resolution: {integrity: sha512-QeuRYxfLPm8HGbWKYpZZA//hCn8J+WO8hVrEAU2VQG0BLnfHTX9tcqGbQJLzcePFdtFVVXVIkm3IkSAUWajOXg==}
-    engines: {node: '>= 20.3.0'}
 
   '@oxc-project/types@0.152.0':
     resolution: {integrity: sha512-oM/5rLBm2tPkg0iBgkH/FOeR3PCDpY19GTgAZjMFM8h9WI9VW7cLgzp6nwtarYKmovavIQZ+Fe/RKX/8C8O/Rw==}
@@ -501,6 +447,46 @@ packages:
 
   '@standard-schema/spec@1.1.0':
     resolution: {integrity: sha512-l2aFy5jALhniG5HgqrD6jXLi/rUWrKvqN/qJx6yoJsgKhblVd+iqqU4RCXavm/jPityDo5TCvKMnpjKnOriy0w==}
+
+  '@strangecyan/iroh-darwin-arm64@1.1.0-relayed.1':
+    resolution: {integrity: sha512-iH0fUVUJoAU9YRJ3Pl8MRt8LgBMppw1k76fFaAFlUr8V6WujqaYOdevSnQ1htQ6uUtpuNVcAbshiyU0Lanphgw==}
+    engines: {node: '>= 20.3.0'}
+    cpu: [arm64]
+    os: [darwin]
+
+  '@strangecyan/iroh-linux-arm64-gnu@1.1.0-relayed.1':
+    resolution: {integrity: sha512-0EmUv1zXYZ/lvB/eGZvkXiCDWweE5CT5JgyiY63RZdr8GBJGGLvOovGmjXyqf7NMp/j+v/RAIgoc0L9GwUk6Pw==}
+    engines: {node: '>= 20.3.0'}
+    cpu: [arm64]
+    os: [linux]
+
+  '@strangecyan/iroh-linux-arm64-musl@1.1.0-relayed.1':
+    resolution: {integrity: sha512-IMux5lzKjh0a+C+/ELhIEr5C49/AdvKEazS3Sa9XLqfmR3knnSHXqp1Wt6yC0NiiCILTclIVH+f5Y9cUUOGQXQ==}
+    engines: {node: '>= 20.3.0'}
+    cpu: [arm64]
+    os: [linux]
+
+  '@strangecyan/iroh-linux-x64-gnu@1.1.0-relayed.1':
+    resolution: {integrity: sha512-TogoFnusZ+rirn2FsstIJUxdE9bCkA7X5Hzqqea3PMn1tucMSjMJU/4c5hEPVA7RPLzIwNg1RNzR21p7UfOZVg==}
+    engines: {node: '>= 20.3.0'}
+    cpu: [x64]
+    os: [linux]
+
+  '@strangecyan/iroh-linux-x64-musl@1.1.0-relayed.1':
+    resolution: {integrity: sha512-1Sf66Gcma3i7Aa167IZnXoOVGU8Fip8Ku5OGpxAfRi1P0wudvJAlw40xatoeSNwrTEnfOgHBJUFteub5XSr6uA==}
+    engines: {node: '>= 20.3.0'}
+    cpu: [x64]
+    os: [linux]
+
+  '@strangecyan/iroh-win32-x64-msvc@1.1.0-relayed.1':
+    resolution: {integrity: sha512-q4zSN5LKwGc6NIDiRvODwCsmux2cSdYhlHFxN8zcen5W3WOBOMfsyEgRE2JeKyC5s9K2a2uEOfEtlt3KmF8K7Q==}
+    engines: {node: '>= 20.3.0'}
+    cpu: [x64]
+    os: [win32]
+
+  '@strangecyan/iroh@1.1.0-relayed.1':
+    resolution: {integrity: sha512-o1+r+WD3kdl9oii0DhOp9iNZq2FKSSto3rsRh/3kFLwhOKe7TOpS2RZRe0bDoTwbScy+Lup8fa5Hb9LPiKr/yA==}
+    engines: {node: '>= 20.3.0'}
 
   '@types/chai@5.2.3':
     resolution: {integrity: sha512-Mw558oeA9fFbv65/y4mHtXDs9bPnFMZAL/jxdPFUpOHHIXX91mcgEHbS5Lahr+pwZFR8A7GQleRWeI6cGFC2UA==}
@@ -893,53 +879,6 @@ snapshots:
 
   '@jridgewell/sourcemap-codec@1.6.0': {}
 
-  '@number0/iroh-android-arm-eabi@1.0.0':
-    optional: true
-
-  '@number0/iroh-android-arm64@1.0.0':
-    optional: true
-
-  '@number0/iroh-darwin-arm64@1.0.0':
-    optional: true
-
-  '@number0/iroh-linux-arm-gnueabihf@1.0.0':
-    optional: true
-
-  '@number0/iroh-linux-arm-musleabihf@1.0.0':
-    optional: true
-
-  '@number0/iroh-linux-arm64-gnu@1.0.0':
-    optional: true
-
-  '@number0/iroh-linux-arm64-musl@1.0.0':
-    optional: true
-
-  '@number0/iroh-linux-x64-gnu@1.0.0':
-    optional: true
-
-  '@number0/iroh-linux-x64-musl@1.0.0':
-    optional: true
-
-  '@number0/iroh-win32-arm64-msvc@1.0.0':
-    optional: true
-
-  '@number0/iroh-win32-x64-msvc@1.0.0':
-    optional: true
-
-  '@number0/iroh@1.0.0':
-    optionalDependencies:
-      '@number0/iroh-android-arm-eabi': 1.0.0
-      '@number0/iroh-android-arm64': 1.0.0
-      '@number0/iroh-darwin-arm64': 1.0.0
-      '@number0/iroh-linux-arm-gnueabihf': 1.0.0
-      '@number0/iroh-linux-arm-musleabihf': 1.0.0
-      '@number0/iroh-linux-arm64-gnu': 1.0.0
-      '@number0/iroh-linux-arm64-musl': 1.0.0
-      '@number0/iroh-linux-x64-gnu': 1.0.0
-      '@number0/iroh-linux-x64-musl': 1.0.0
-      '@number0/iroh-win32-arm64-msvc': 1.0.0
-      '@number0/iroh-win32-x64-msvc': 1.0.0
-
   '@oxc-project/types@0.152.0': {}
 
   '@oxfmt/binding-android-arm-eabi@0.63.0':
@@ -1108,6 +1047,33 @@ snapshots:
   '@rolldown/pluginutils@1.0.1': {}
 
   '@standard-schema/spec@1.1.0': {}
+
+  '@strangecyan/iroh-darwin-arm64@1.1.0-relayed.1':
+    optional: true
+
+  '@strangecyan/iroh-linux-arm64-gnu@1.1.0-relayed.1':
+    optional: true
+
+  '@strangecyan/iroh-linux-arm64-musl@1.1.0-relayed.1':
+    optional: true
+
+  '@strangecyan/iroh-linux-x64-gnu@1.1.0-relayed.1':
+    optional: true
+
+  '@strangecyan/iroh-linux-x64-musl@1.1.0-relayed.1':
+    optional: true
+
+  '@strangecyan/iroh-win32-x64-msvc@1.1.0-relayed.1':
+    optional: true
+
+  '@strangecyan/iroh@1.1.0-relayed.1':
+    optionalDependencies:
+      '@strangecyan/iroh-darwin-arm64': 1.1.0-relayed.1
+      '@strangecyan/iroh-linux-arm64-gnu': 1.1.0-relayed.1
+      '@strangecyan/iroh-linux-arm64-musl': 1.1.0-relayed.1
+      '@strangecyan/iroh-linux-x64-gnu': 1.1.0-relayed.1
+      '@strangecyan/iroh-linux-x64-musl': 1.1.0-relayed.1
+      '@strangecyan/iroh-win32-x64-msvc': 1.1.0-relayed.1
 
   '@types/chai@5.2.3':
     dependencies:

@@ -1,0 +1,6 @@
+# A local iroh-relay for the proof of concept: plain HTTP in --dev mode, admitting everyone. Address discovery is
+# off, so endpoints learn their own addresses only from their interfaces.
+enable_relay = true
+http_bind_addr = "127.0.0.1:3340"
+enable_quic_addr_discovery = false
+enable_metrics = false
