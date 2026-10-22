@@ -4,7 +4,13 @@
  * @module
  */
 
-import type { BiStream, Endpoint, EndpointAddr, Connection as NativeConnection } from '@number0/iroh';
+import type {
+  BiStream,
+  Endpoint,
+  EndpointAddr,
+  Incoming as NativeIncoming,
+  Connection as NativeConnection
+} from '@number0/iroh';
 import { EndpointTicket } from '@number0/iroh';
 import {
   ALPN,
@@ -124,12 +130,86 @@ function adaptConnection(connection: NativeConnection): Connection {
   };
 }
 
-function adaptListener(endpoint: Endpoint): Listener {
+/**
+ * How an inbound connection is let in.
+ *
+ * - `direct`: accepted with holepunching, so the peer learns this endpoint's
+ *   direct addresses and the connection may leave the relay.
+ * - `relayed`: accepted without NAT traversal, so this endpoint never
+ *   advertises its addresses or probes the peer's, and the connection stays on
+ *   the path it arrived on.
+ * - `refuse`: refused before the handshake.
+ */
+export type Admission = 'direct' | 'relayed' | 'refuse';
+
+/** Where an inbound connection came from, known before its handshake. */
+export interface IncomingPeer {
+  /** How the connection arrived. */
+  readonly kind: 'ip' | 'relay' | 'custom';
+  /**
+   * The remote endpoint id, for connections through a relay: the relay
+   * authenticated it. Over IP it is unknown until the handshake.
+   */
+  readonly endpointId?: string;
+  /** The relay URL, for connections through a relay. */
+  readonly relayUrl?: string;
+  /** The remote `ip:port`, for direct connections. */
+  readonly address?: string;
+}
+
+/** Options for {@link serve}. */
+export interface ServeOptions {
+  /**
+   * Decide how each inbound connection is let in, before its handshake. It runs
+   * per connection, so a slow decision does not hold up the next. Defaults to
+   * admitting every connection `direct`.
+   */
+  readonly admit?: (peer: IncomingPeer) => Admission | Promise<Admission>;
+}
+
+/**
+ * Where `incoming` came from. The bindings report the kind as a string, so any
+ * kind other than `ip` or `relay` is treated as a custom transport.
+ */
+async function incomingPeer(incoming: NativeIncoming): Promise<IncomingPeer> {
+  const remote = await incoming.remoteAddr();
+  const kind = remote.kind === 'ip' || remote.kind === 'relay' ? remote.kind : 'custom';
+  if (kind === 'relay') return { kind, endpointId: remote.endpointId, relayUrl: remote.addr };
+  if (kind === 'ip') return { kind, address: remote.addr };
+  return { kind };
+}
+
+/** Admit `incoming` as `admit` decides, and complete its handshake. */
+async function admitIncoming(incoming: NativeIncoming, admit: NonNullable<ServeOptions['admit']>): Promise<Connection> {
+  const peer = await incomingPeer(incoming);
+  // A decision that fails refuses the connection, rather than leaving it waiting, and still rejects the handshake.
+  const decided = Promise.resolve(peer).then(admit);
+  decided.catch(() => incoming.refuse()).catch(() => undefined);
+  const admission = await decided;
+  if (admission === 'refuse') {
+    await incoming.refuse();
+    throw new Error('The connection was refused');
+  }
+  const accepting = admission === 'relayed' ? await incoming.acceptWithoutNatTraversal() : await incoming.accept();
+  const connection = adaptConnection(await accepting.connect());
+  // The relay authenticated the id the decision was made on, and the handshake the id the connection
+  // is from: they match unless something is badly wrong, and then it must not be served.
+  if (peer.endpointId !== undefined && connection.remoteId() !== peer.endpointId) {
+    connection.close();
+    throw new Error('The handshake authenticated a different endpoint than the relay');
+  }
+  return connection;
+}
+
+const admitDirect = (): Admission => 'direct';
+
+function adaptListener(endpoint: Endpoint, options: ServeOptions): Listener {
+  const admit = options.admit ?? admitDirect;
   return {
     accept: async () => {
       const incoming = await endpoint.acceptNext();
       if (!incoming) return undefined;
-      return { connect: async () => adaptConnection(await (await incoming.accept()).connect()) };
+      return { connect: () => admitIncoming(incoming, admit) };
     },
     close: () => endpoint.close()
   };
@@ -137,17 +217,27 @@ function adaptListener(endpoint: Endpoint): Listener {
 
 /** Connect to a remote endpoint address and return an HTTP client. */
 export async function connect(endpoint: Endpoint, address: EndpointAddr): Promise<IrohHttpClient> {
-  return new IrohHttpClient(adaptConnection(await endpoint.connect(address, ALPN)));
+  return clientFor(await endpoint.connect(address, ALPN));
+}
+
+/**
+ * An HTTP client over a native connection that negotiated the `iroh-http/1`
+ * ALPN, for callers that also want the connection itself, such as its paths.
+ */
+export function clientFor(connection: NativeConnection): IrohHttpClient {
+  return new IrohHttpClient(adaptConnection(connection));
 }
 
 /**
  * Serve `handler` on `endpoint`, taking ownership of its accept loop.
  *
- * Disposing the server stops accepting, closes active connections, and closes
- * the endpoint.
+ * `options.admit` decides how each inbound connection is let in: with
+ * holepunching, relayed without revealing this endpoint's addresses, or not at
+ * all. Disposing the server stops accepting, closes active connections, and
+ * closes the endpoint.
  */
-export function serve(endpoint: Endpoint, handler: Handler): IrohHttpServer {
-  return new IrohHttpServer(adaptListener(endpoint), handler);
+export function serve(endpoint: Endpoint, handler: Handler, options: ServeOptions = {}): IrohHttpServer {
+  return new IrohHttpServer(adaptListener(endpoint, options), handler);
 }
 
 /** Parse an endpoint ticket into a dialable address. */

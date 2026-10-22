@@ -1,0 +1,23 @@
+[
+  {
+    "endpointId": "8139770ea87d175f56a35466c34c7ecccb8d8a91b4ee37a25df60f5b8fc9b394",
+    "allow": {
+      "relayed": true,
+      "direct": true
+    }
+  },
+  {
+    "endpointId": "ed4928c628d1c2c6eae90338905995612959273a5c63f93636c14614ac8737d1",
+    "allow": {
+      "relayed": true,
+      "direct": false
+    }
+  },
+  {
+    "endpointId": "ca93ac1705187071d67b83c7ff0efe8108e8ec4530575d7726879333dbdabe7c",
+    "allow": {
+      "relayed": false,
+      "direct": false
+    }
+  }
+]
