@@ -337,6 +337,31 @@ describe('IrohHttpClient abort', () => {
   });
 });
 
+describe('IrohHttpClient upload', () => {
+  it('cancels an upload waiting on its source once the peer stops reading it, and still delivers the response', async () => {
+    const pair = createStreamPair();
+    const cancelled = vi.fn();
+    const body = new ReadableStream<Uint8Array>({ cancel: cancelled });
+    const openStream = async () => pair.client;
+    const http = new IrohHttpClient({
+      remoteId: () => peer.endpointId,
+      openStream,
+      acceptStream: openStream,
+      close() {}
+    });
+    const init = { method: 'POST', body, duplex: 'half' as const };
+    const pending = http.fetch('/', init);
+
+    // The handler answers without reading the request, which stops the upload.
+    await serveExchange(pair.server, () => new Response('early response'), peer);
+
+    await expect((await pending).text()).resolves.toBe('early response');
+    await vi.waitFor(() => expect(cancelled).toHaveBeenCalledWith(expect.objectContaining({ name: 'AbortError' })));
+    expect(pair.clientRecord.reset).toBe(false);
+    await vi.waitFor(() => expect(body.locked).toBe(false));
+  });
+});
+
 /** Frame a raw head payload, bypassing the encoder's own validation. */
 function headFrame(payload: Uint8Array): Uint8Array {
   const frame = new Uint8Array(HEAD_PREFIX_SIZE + payload.byteLength);
@@ -432,6 +457,154 @@ describe('serveExchange', () => {
     );
 
     await expect((await readResponse(client)).text()).resolves.toBe('ok');
+  });
+
+  it('releases a body with nothing to send when the peer stops reading the response', async () => {
+    const { client, server, serverRecord } = createStreamPair();
+    const cancelled = vi.fn();
+    const signals: AbortSignal[] = [];
+
+    await writeRequest(client, new Request('http://peer.iroh/events'));
+    const serving = serveExchange(
+      server,
+      request => {
+        signals.push(request.signal);
+        // Produces one chunk and then waits, as an event stream with no events does.
+        const body = new ReadableStream<Uint8Array>({
+          start: controller => controller.enqueue(encoder.encode('first')),
+          cancel: cancelled
+        });
+        return new Response(body);
+      },
+      peer
+    );
+    const response = await readResponse(client);
+    const reader = response.body!.getReader();
+    expect((await reader.read()).value).toEqual(encoder.encode('first'));
+    expect(signals[0].aborted).toBe(false);
+
+    await reader.cancel();
+    await serving;
+
+    expect(signals[0].aborted).toBe(true);
+    expect(signals[0].reason).toMatchObject({ name: 'AbortError', message: 'The peer abandoned the exchange' });
+    expect(cancelled).toHaveBeenCalledWith(signals[0].reason);
+    expect(serverRecord.reset).toBe(true);
+  });
+
+  it('aborts the request signal of a handler still running when the peer resets the exchange', async () => {
+    const { client, server, serverRecord } = createStreamPair();
+    const arrived = Promise.withResolvers<void>();
+    const cancelled = vi.fn();
+    const signals: AbortSignal[] = [];
+
+    await writeRequest(client, new Request('http://peer.iroh/slow'));
+    const serving = serveExchange(
+      server,
+      async request => {
+        signals.push(request.signal);
+        arrived.resolve();
+        await new Promise(resolve => request.signal.addEventListener('abort', resolve, { once: true }));
+        return new Response(new ReadableStream<Uint8Array>({ cancel: cancelled }));
+      },
+      peer
+    );
+    await arrived.promise;
+
+    await client.reset();
+    await serving;
+
+    expect(signals[0].reason).toMatchObject({ name: 'AbortError' });
+    // The response was never wanted, so its body is released unsent.
+    expect(cancelled).toHaveBeenCalledWith(signals[0].reason);
+    expect(serverRecord.reset).toBe(true);
+  });
+
+  it('releases the body when a write fails, on a stream that cannot report departure', async () => {
+    const pair = createStreamPair();
+    const signals: AbortSignal[] = [];
+    // No `stopped`, as a transport written against the 0.3 interface has.
+    const server: ExchangeStream = {
+      write: bytes => pair.server.write(bytes),
+      readExact: size => pair.server.readExact(size),
+      finish: () => pair.server.finish(),
+      stop: () => pair.server.stop(),
+      reset: () => pair.server.reset()
+    };
+    const failure = new Error('the peer stopped the stream');
+    const body = new TransformStream<Uint8Array, Uint8Array>();
+    const writer = body.writable.getWriter();
+    const closed = writer.closed.catch((reason: Error) => reason);
+
+    await writeRequest(pair.client, new Request('http://peer.iroh/events'));
+    const serving = serveExchange(
+      server,
+      request => {
+        signals.push(request.signal);
+        return new Response(body.readable);
+      },
+      peer
+    );
+    await readResponse(pair.client);
+    expect(signals[0].aborted).toBe(false);
+
+    // Nothing tells the server the peer has gone until it next writes.
+    vi.spyOn(pair.server, 'write').mockRejectedValue(failure);
+    await writer.write(encoder.encode('event'));
+    await serving;
+
+    expect(signals[0].reason).toMatchObject({ name: 'AbortError' });
+    // Cancelling the body's readable side is what errors the producer's writer.
+    await expect(closed).resolves.toBe(failure);
+    expect(pair.serverRecord.reset).toBe(true);
+  });
+
+  it('leaves the request signal alone when the exchange completes', async () => {
+    const { client, server, serverRecord } = createStreamPair();
+    const signals: AbortSignal[] = [];
+
+    await writeRequest(client, new Request('http://peer.iroh/done'));
+    await serveExchange(
+      server,
+      request => {
+        signals.push(request.signal);
+        return new Response('done');
+      },
+      peer
+    );
+    await expect((await readResponse(client)).text()).resolves.toBe('done');
+    // A peer may still stop a stream it has read to the end, as a dropped Rust stream does.
+    await client.stop();
+    await new Promise(resolve => setImmediate(resolve));
+
+    expect(signals[0].aborted).toBe(false);
+    expect(serverRecord.reset).toBe(false);
+  });
+
+  it('reports a body that fails in-band without aborting the request signal', async () => {
+    const { client, server, serverRecord } = createStreamPair();
+    const signals: AbortSignal[] = [];
+
+    await writeRequest(client, new Request('http://peer.iroh/broken'));
+    await serveExchange(
+      server,
+      request => {
+        signals.push(request.signal);
+        return new Response(
+          new ReadableStream<Uint8Array>({
+            pull() {
+              throw new Error('deliberate failure');
+            }
+          })
+        );
+      },
+      peer
+    );
+
+    await expect((await readResponse(client)).text()).rejects.toThrow('Remote body failed: deliberate failure');
+    expect(signals[0].aborted).toBe(false);
+    expect(serverRecord.finished).toBe(true);
+    expect(serverRecord.reset).toBe(false);
   });
 });
 

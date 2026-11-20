@@ -1,5 +1,5 @@
 import type { Connection, Incoming, Listener } from './transport.ts';
-import { receiveRequest, writeResponse, type ExchangeStream, type Handler, type PeerInfo } from './wire.ts';
+import { receiveRequest, sendResponse, type ExchangeStream, type Handler, type PeerInfo } from './wire.ts';
 
 /** Run the handler, turning a thrown error into a `500`. */
 async function respond(handler: Handler, request: Request, peer: PeerInfo): Promise<Response> {
@@ -25,11 +25,40 @@ async function respond(handler: Handler, request: Request, peer: PeerInfo): Prom
  * abandoned: the receive side is stopped, so a peer still uploading is told to
  * stop rather than left blocked on flow control, and reads still pending on the
  * body or its clones fail.
+ *
+ * A peer that gives up on the response before all of it is sent, by stopping
+ * its read of the response, resetting the exchange, or losing the connection,
+ * has abandoned the exchange. `request.signal` then aborts with an
+ * `AbortError`, and the response body is cancelled with the same reason, so
+ * its source's `cancel` runs and a producer waiting on backpressure is
+ * released. Where the stream reports departure (see
+ * {@link ExchangeStream.stopped}) this happens at once, even while the handler
+ * is still running or the body has nothing to write; otherwise it happens when
+ * a write fails. The stream is reset once the handler has returned, so until
+ * then a handler may keep reading a request body the peer is still sending.
+ *
+ * `request.signal` does not abort when an exchange completes: once the
+ * response body's source has been read to its end, the signal stays as it is.
  */
 export async function serveExchange(stream: ExchangeStream, handler: Handler, peer: PeerInfo): Promise<void> {
+  const abandoned = new AbortController();
+  // Once the response body's source is drained there is nothing left to
+  // release, and a peer that stops a response it has read to the end has not
+  // abandoned anything.
+  let drained = false;
+  const abandon = () => {
+    if (!drained) abandoned.abort(new DOMException('The peer abandoned the exchange', 'AbortError'));
+  };
+  stream
+    .stopped?.()
+    .then(gone => {
+      if (gone) abandon();
+    })
+    .catch(() => undefined);
+
   // The peer violated `SPEC.md`, or the stream failed. Answering `500` would
   // imply a well-formed request was received and understood.
-  const received = await receiveRequest(stream, peer).catch(() => null);
+  const received = await receiveRequest(stream, peer, abandoned.signal).catch(() => null);
   if (!received) {
     await stream.reset();
     return;
@@ -37,8 +66,12 @@ export async function serveExchange(stream: ExchangeStream, handler: Handler, pe
 
   const response = await respond(handler, received.request, peer);
   try {
-    await writeResponse(stream, response);
+    await sendResponse(stream, response, abandoned.signal, () => {
+      drained = true;
+    });
   } catch {
+    // A response that cannot be written is one the peer will never read.
+    abandon();
     // Resetting aborts both directions, so no unread request body survives it.
     await stream.reset();
     return;
@@ -56,7 +89,9 @@ export async function serveExchange(stream: ExchangeStream, handler: Handler, pe
  * Every accepted connection is served concurrently, and every bidirectional
  * stream on a connection is one independent exchange. Disposing the server
  * stops accepting, closes active connections, closes the listener, and waits
- * for in-flight exchanges to settle.
+ * for in-flight exchanges to settle. Closing a connection abandons its
+ * exchanges, so their `request.signal`s abort; a handler that ignores its
+ * signal holds disposal up until it returns.
  */
 export class IrohHttpServer implements AsyncDisposable {
   /**

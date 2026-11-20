@@ -87,7 +87,139 @@ describe('node to node', () => {
       await expect((await client.fetch('/ping')).text()).resolves.toBe('pong');
     } finally {
       gate.resolve();
-      await writer.close();
+      // The abandoned exchange cancelled the body, which errors its writer.
+      await writer.close().catch(() => undefined);
+      client.close();
+      await clientEndpoint.close();
+      await server[Symbol.asyncDispose]();
+    }
+  });
+
+  it.each(['cancels the response body', 'aborts the fetch'])(
+    'releases a streaming handler when the client %s',
+    async departure => {
+      const cancelled = Promise.withResolvers<DOMException>();
+      const aborted = Promise.withResolvers<DOMException>();
+      const serverEndpoint = await bind();
+      // An event stream with a heartbeat. The native bindings deliver a stop
+      // only once the read in flight returns, so a Node client's departure
+      // reaches the server with the next bytes the server sends.
+      const server = serve(serverEndpoint, request => {
+        request.signal.addEventListener('abort', () => aborted.resolve(request.signal.reason), { once: true });
+        const body = new ReadableStream<Uint8Array>({
+          async pull(controller) {
+            await new Promise(resolve => setTimeout(resolve, 50));
+            controller.enqueue(new TextEncoder().encode(': beat\n\n'));
+          },
+          cancel: reason => cancelled.resolve(reason)
+        });
+        return new Response(body, { headers: { 'content-type': 'text/event-stream' } });
+      });
+      const clientEndpoint = await bind();
+      const client = await connect(clientEndpoint, serverEndpoint.addr());
+
+      try {
+        const abort = new AbortController();
+        const response = await client.fetch('/events', { signal: abort.signal });
+        const reader = response.body!.getReader();
+        expect(new TextDecoder().decode((await reader.read()).value)).toBe(': beat\n\n');
+        // Long enough that the next read is waiting in the bindings.
+        await new Promise(resolve => setTimeout(resolve, 10));
+
+        if (departure === 'aborts the fetch') abort.abort();
+        else await reader.cancel();
+
+        const reason = await aborted.promise;
+        expect(reason).toMatchObject({ name: 'AbortError', message: 'The peer abandoned the exchange' });
+        await expect(cancelled.promise).resolves.toBe(reason);
+        // Only that exchange is abandoned.
+        await expect((await client.fetch('/events')).body!.getReader().read()).resolves.toMatchObject({ done: false });
+      } finally {
+        client.close();
+        await clientEndpoint.close();
+        await server[Symbol.asyncDispose]();
+      }
+    }
+  );
+
+  it('releases a streaming handler with nothing to send when the connection closes', async () => {
+    const cancelled = Promise.withResolvers<DOMException>();
+    const aborted = Promise.withResolvers<DOMException>();
+    const serverEndpoint = await bind();
+    // One event and then nothing, so no write is attempted after the client has gone.
+    const server = serve(serverEndpoint, request => {
+      request.signal.addEventListener('abort', () => aborted.resolve(request.signal.reason), { once: true });
+      const body = new ReadableStream<Uint8Array>({
+        start: controller => controller.enqueue(new TextEncoder().encode('data: first\n\n')),
+        cancel: reason => cancelled.resolve(reason)
+      });
+      return new Response(body, { headers: { 'content-type': 'text/event-stream' } });
+    });
+    const clientEndpoint = await bind();
+    const client = await connect(clientEndpoint, serverEndpoint.addr());
+
+    try {
+      const response = await client.fetch('/events');
+      const reader = response.body!.getReader();
+      expect(new TextDecoder().decode((await reader.read()).value)).toBe('data: first\n\n');
+
+      client.close();
+
+      const reason = await aborted.promise;
+      expect(reason).toMatchObject({ name: 'AbortError' });
+      await expect(cancelled.promise).resolves.toBe(reason);
+    } finally {
+      client.close();
+      await clientEndpoint.close();
+      await server[Symbol.asyncDispose]();
+    }
+  });
+
+  it('aborts the request signal of a handler still running when the server is disposed', async () => {
+    const arrived = Promise.withResolvers<AbortSignal>();
+    const serverEndpoint = await bind();
+    const server = serve(serverEndpoint, async request => {
+      arrived.resolve(request.signal);
+      // Answers only once told the exchange was abandoned.
+      await new Promise(resolve => request.signal.addEventListener('abort', resolve, { once: true }));
+      return new Response('too late');
+    });
+    const clientEndpoint = await bind();
+    const client = await connect(clientEndpoint, serverEndpoint.addr());
+
+    try {
+      const rejected = expect(client.fetch('/wait')).rejects.toThrow();
+      const signal = await arrived.promise;
+      expect(signal.aborted).toBe(false);
+
+      // Disposal waits for exchanges in flight, so it returning shows the handler was released.
+      await server[Symbol.asyncDispose]();
+
+      expect(signal.aborted).toBe(true);
+      await rejected;
+    } finally {
+      client.close();
+      await clientEndpoint.close();
+      await server[Symbol.asyncDispose]();
+    }
+  });
+
+  it('does not abort the request signal of an exchange that completes', async () => {
+    const signals: AbortSignal[] = [];
+    const serverEndpoint = await bind();
+    const server = serve(serverEndpoint, request => {
+      signals.push(request.signal);
+      return new Response('done');
+    });
+    const clientEndpoint = await bind();
+    const client = await connect(clientEndpoint, serverEndpoint.addr());
+
+    try {
+      await expect((await client.fetch('/done')).text()).resolves.toBe('done');
+      // A later exchange on the connection shows the first has fully settled.
+      await expect((await client.fetch('/done')).text()).resolves.toBe('done');
+      expect(signals[0].aborted).toBe(false);
+    } finally {
       client.close();
       await clientEndpoint.close();
       await server[Symbol.asyncDispose]();

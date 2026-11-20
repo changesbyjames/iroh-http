@@ -163,6 +163,27 @@ the same connection. Closing the connection uses QUIC error code `1`.
 A peer MUST NOT wait for its response body to be consumed before serving other
 streams.
 
+### Abandoned bodies
+
+A sender learns that its body is no longer wanted when the peer stops the
+stream (`stop_sending`), resets the exchange, or the connection is lost. It
+MUST then stop producing the body, and SHOULD release whatever produces it at
+once rather than when it next has a chunk to write: a body that is waiting for
+something to send, such as an event stream, would otherwise never be released.
+This applies to a client's request body as much as to a server's response.
+
+A client that stops the response before its terminal frame has abandoned the
+response, and a server SHOULD tell the handler so: the TypeScript server aborts
+`request.signal` and cancels the response body, and the Rust server drops the
+service's future and the response body.
+
+A sender MUST NOT treat a stop that arrives after it has sent the terminal
+frame as abandonment. A receiver may stop a stream whose body it has read to
+the end, and an exchange that completed stays completed.
+
+Stopping the response does not by itself reset the request: a server MAY keep
+reading a request body the client is still sending.
+
 ## What is intentionally absent
 
 | Omitted                         | Because                                                 |

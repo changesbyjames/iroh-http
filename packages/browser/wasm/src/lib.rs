@@ -288,6 +288,24 @@ impl IrohHttpStream {
         self.send.lock().await.finish().map_err(to_js_error)
     }
 
+    /// Resolve once it is known whether the peer still wants what this side
+    /// sends: `true` if it stopped the stream or the connection was lost,
+    /// `false` if it took everything this side finished, or this side reset.
+    pub async fn stopped(&self) -> bool {
+        if self.send_cancel.is_triggered() {
+            return false;
+        }
+
+        // The future does not borrow the stream, so the lock is released
+        // before waiting and writes carry on meanwhile.
+        let stopped = self.send.lock().await.stopped();
+        tokio::select! {
+            biased;
+            () = self.send_cancel.wait() => false,
+            result = stopped => !matches!(result, Ok(None)),
+        }
+    }
+
     /// Ask the peer to stop sending, interrupting any read in flight.
     pub async fn stop(&self) {
         self.recv_cancel.trigger();

@@ -9,8 +9,10 @@
  *
  * The endpoint lives as long as the worker, which the browser ends once no tab
  * of the origin uses it. Closing a shared endpoint resets that tab's exchanges
- * and closes its connections. A tab that goes away without closing leaves its
- * exchanges to run until the peer ends them or the worker ends.
+ * and closes its connections. So does the tab going away without closing it:
+ * the tab holds a Web Lock while attached, and the worker detaches it once the
+ * lock is released. Where Web Locks are unavailable, such a tab's exchanges
+ * run until the peer ends them or the worker ends.
  *
  * A shared endpoint is outbound only: the worker refuses every inbound
  * connection.
@@ -145,6 +147,12 @@ class SharedExchangeStream implements ExchangeStream {
   async reset(): Promise<void> {
     await this.port.call('reset', { stream: this.stream }).catch(() => undefined);
   }
+
+  async stopped(): Promise<boolean> {
+    // A call that fails means the tab detached or the worker went, and with
+    // either the exchange.
+    return await this.port.call('stopped', { stream: this.stream }).catch(() => true);
+  }
 }
 
 /** A {@link Connection} whose QUIC connection lives in the shared worker. */
@@ -193,7 +201,8 @@ export interface SharedEndpoint extends AsyncDisposable {
 class SharedWorkerEndpoint implements SharedEndpoint {
   constructor(
     private readonly port: WorkerPort,
-    private readonly id: string
+    private readonly id: string,
+    private readonly liveness: Liveness | undefined
   ) {}
 
   endpointId(): string {
@@ -213,11 +222,41 @@ class SharedWorkerEndpoint implements SharedEndpoint {
 
   async close(): Promise<void> {
     await this.port.detach();
+    this.liveness?.release();
   }
 
   [Symbol.asyncDispose](): Promise<void> {
     return this.close();
   }
+}
+
+/** A Web Lock this tab holds, which the browser releases if the tab goes away. */
+interface Liveness {
+  name: string;
+  release: () => void;
+}
+
+/**
+ * Take a lock that only this tab holds, so that the worker can tell when the
+ * tab has gone. Resolves `undefined` where Web Locks are unavailable.
+ */
+async function holdLiveness(): Promise<Liveness | undefined> {
+  if (!('locks' in navigator)) return undefined;
+  const name = `iroh-http:tab:${crypto.randomUUID()}`;
+  let release: () => void = () => undefined;
+  const released = new Promise<void>(resolve => {
+    release = resolve;
+  });
+  // Nobody else knows the name, so the lock is granted without waiting.
+  await new Promise<void>((resolve, reject) => {
+    navigator.locks
+      .request(name, () => {
+        resolve();
+        return released;
+      })
+      .catch(reject);
+  });
+  return { name, release };
 }
 
 async function workerName(secretKey: Uint8Array): Promise<string> {
@@ -246,11 +285,19 @@ export async function createSharedEndpoint(options: SharedEndpointOptions): Prom
   const port = new WorkerPort(worker.port);
   worker.addEventListener('error', () => port.fail(new Error('The shared worker failed to start')));
 
+  // A browser that refuses the lock still shares the endpoint, only without
+  // the worker noticing a tab that goes away.
+  const liveness = await holdLiveness().catch(() => undefined);
   try {
-    const id = await port.call('attach', { secretKey: options.secretKey, relay: options.relay });
-    return new SharedWorkerEndpoint(port, id);
+    const id = await port.call('attach', {
+      secretKey: options.secretKey,
+      relay: options.relay,
+      liveness: liveness?.name
+    });
+    return new SharedWorkerEndpoint(port, id, liveness);
   } catch (error) {
     await port.detach();
+    liveness?.release();
     throw error;
   }
 }

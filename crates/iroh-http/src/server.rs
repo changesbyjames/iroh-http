@@ -69,6 +69,12 @@ where
 }
 
 /// Serve one exchange: read the request, run the service, write the response.
+///
+/// A peer that gives up on the response before it is sent, by stopping its
+/// read of it, resetting the exchange, or losing the connection, has abandoned
+/// the exchange. The service's future and the response body are then dropped,
+/// whether the service is still running, or the body is waiting to produce its
+/// next frame, and the stream is reset.
 async fn serve_exchange<S, B>(mut send: SendStream, recv: RecvStream, service: S, peer: PeerInfo)
 where
     S: Service<Request<Body>, Response = Response<B>>,
@@ -87,9 +93,23 @@ where
     // contract requires. Calling without it panics readiness-aware middleware
     // such as `ConcurrencyLimit`.
     //
+    // Nothing is finished yet, so `stopped` resolving at all means the peer
+    // will not read a response. Dropping the service's future is how it is
+    // told; writing the response keeps the same watch over its body.
+    let stopped = send.stopped();
+    let served = n0_future::future::or(async { Some(service.oneshot(request).await) }, async {
+        let _ = stopped.await;
+        None
+    })
+    .await;
+    let Some(served) = served else {
+        let _ = send.reset(wire::ERROR_CODE);
+        return;
+    };
+
     // Nothing has been written yet, so a status is still available if the
     // service fails. Details stay local rather than leaking to the caller.
-    let outcome = if let Ok(response) = service.oneshot(request).await {
+    let outcome = if let Ok(response) = served {
         wire::write_response(&mut send, response).await
     } else {
         let mut response = Response::new(Body::once("Internal Server Error"));

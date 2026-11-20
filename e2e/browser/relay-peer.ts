@@ -4,7 +4,8 @@
  * Browsers cannot dial a peer directly, so unlike the rest of the suite this
  * needs the network. The peer serves the conformance API, plus `/sink`, which
  * reads a request body that the browser tests keep streaming, and records how
- * the upload ends.
+ * the upload ends, and `/events`, which streams a response that goes quiet,
+ * and records whether the handler is told its reader has gone.
  */
 
 import { Endpoint, EndpointTicket } from '@number0/iroh';
@@ -43,6 +44,38 @@ const sink: Handler = async request => {
   return new Response(null, { status: 204 });
 };
 
+/** One `/events?id=…` response as the peer saw it end. */
+export interface EventsState {
+  /** Whether `request.signal` aborted. */
+  aborted: boolean;
+  /** Whether the response body was cancelled. */
+  cancelled: boolean;
+}
+
+const eventStreams = new Map<string, EventsState>();
+
+// An event stream that sends one event and then has nothing more to say, so
+// the peer never writes again and must be told that the reader has gone.
+const events: Handler = request => {
+  const state: EventsState = { aborted: false, cancelled: false };
+  eventStreams.set(new URL(request.url).searchParams.get('id') ?? '', state);
+  request.signal.addEventListener('abort', () => {
+    state.aborted = true;
+  });
+  const body = new ReadableStream<Uint8Array>({
+    start: controller => controller.enqueue(new TextEncoder().encode('data: first\n\n')),
+    cancel() {
+      state.cancelled = true;
+    }
+  });
+  return new Response(body, { headers: { 'content-type': 'text/event-stream' } });
+};
+
+const routes = new Map<string, Handler>([
+  ['/sink', sink],
+  ['/events', events]
+]);
+
 let endpoint: Promise<Endpoint> | undefined = undefined;
 let ticket: Promise<string> | undefined = undefined;
 
@@ -51,9 +84,7 @@ export function peerTicket(): Promise<string> {
   ticket ??= (async () => {
     endpoint = bindRelayed();
     const bound = await endpoint;
-    serve(bound, (request, caller) =>
-      new URL(request.url).pathname === '/sink' ? sink(request, caller) : handler(request, caller)
-    );
+    serve(bound, (request, caller) => (routes.get(new URL(request.url).pathname) ?? handler)(request, caller));
     await bound.online();
     return EndpointTicket.fromAddr(bound.addr()).toString();
   })();
@@ -63,6 +94,11 @@ export function peerTicket(): Promise<string> {
 /** How the `/sink?id=…` upload stands, if it has started. */
 export function sinkState(id: string): SinkState | undefined {
   return sinks.get(id);
+}
+
+/** How the `/events?id=…` response stands, if it has started. */
+export function eventsState(id: string): EventsState | undefined {
+  return eventStreams.get(id);
 }
 
 /** Close the peer if it was started, since its endpoint keeps Node running. */

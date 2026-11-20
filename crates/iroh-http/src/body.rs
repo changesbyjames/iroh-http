@@ -72,6 +72,14 @@ impl BodySender {
             .map_err(|_| Error::Body("body consumer went away".to_owned()))
     }
 
+    /// Wait until the consumer has gone away, after which sending fails.
+    ///
+    /// For a response body this is the peer giving up on the exchange, so a
+    /// producer with nothing to send yet can stop waiting for something to.
+    pub async fn closed(&self) {
+        self.0.closed().await;
+    }
+
     /// End the body with a failure rather than a clean close.
     pub async fn fail(self, error: Error) {
         let _ = self.0.send(Err(error)).await;

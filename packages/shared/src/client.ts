@@ -1,6 +1,20 @@
 import type { Connection } from './transport.ts';
 import { ORIGIN_SUFFIX, readResponseHead, writeRequest, type ExchangeStream, type PeerInfo } from './wire.ts';
 
+/** Why an upload's source is cancelled when the peer stops reading the request body. */
+class UploadStopped extends Error {
+  override readonly name = 'AbortError';
+
+  constructor() {
+    super('The peer stopped reading the request body');
+  }
+}
+
+// oxlint-disable-next-line anti-slop/no-unknown-parameters -- A rejection is any value.
+function isUploadStopped(error: unknown): boolean {
+  return error instanceof UploadStopped;
+}
+
 /**
  * A `fetch`-shaped client bound to one Iroh connection.
  *
@@ -70,7 +84,12 @@ export class IrohHttpClient {
       // ignored, because a late send failure cannot invalidate a response head
       // that has already been accepted. A completed send never settles the
       // race, and `Promise.race` handles whichever promise loses.
-      const sendFailure = writeRequest(opened, request, cancellation.signal)
+      const sendFailure = writeRequest(opened, request, this.uploadSignal(opened, request, cancellation.signal))
+        .catch(error => {
+          // A peer that stops reading the request may still answer it, so
+          // that alone does not fail the exchange.
+          if (cancellation.signal.aborted || !isUploadStopped(error)) throw error;
+        })
         .finally(() => {
           uploadEnded = true;
           complete();
@@ -92,6 +111,23 @@ export class IrohHttpClient {
       reset();
       throw signal.aborted ? signal.reason : error;
     }
+  }
+
+  /**
+   * The signal that ends the upload of `request`: the exchange's own
+   * cancellation, or the peer giving up on the request body, which cancels the
+   * body's source without waiting for a write to fail.
+   */
+  private uploadSignal(stream: ExchangeStream, request: Request, cancellation: AbortSignal): AbortSignal {
+    if (!request.body || !stream.stopped) return cancellation;
+    const stopped = new AbortController();
+    stream
+      .stopped()
+      .then(gone => {
+        if (gone) stopped.abort(new UploadStopped());
+      })
+      .catch(() => undefined);
+    return AbortSignal.any([cancellation, stopped.signal]);
   }
 
   /** Close the underlying connection. */

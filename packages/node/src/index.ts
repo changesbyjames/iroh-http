@@ -75,10 +75,14 @@ async function cancellable<T>(signal: AbortSignal, call: () => Promise<T>): Prom
  * already sent can reach the peer before the reset does. No such bound exists
  * for reads: the native `stop` waits behind a stalled read until more bytes
  * arrive or the connection closes, and only then reaches the peer.
+ *
+ * The native `stopped` takes the send lock only to register its interest, so
+ * it waits alongside writes rather than in front of them.
  */
 class NodeExchangeStream implements ExchangeStream {
   private readonly sendCancel = new AbortController();
   private readonly recvCancel = new AbortController();
+  private departure: Promise<boolean> | undefined = undefined;
 
   constructor(private readonly streams: BiStream) {}
 
@@ -98,6 +102,21 @@ class NodeExchangeStream implements ExchangeStream {
 
   async finish(): Promise<void> {
     await cancellable(this.sendCancel.signal, () => this.streams.send.finish());
+  }
+
+  stopped(): Promise<boolean> {
+    this.departure ??= this.watchDeparture();
+    return this.departure;
+  }
+
+  private async watchDeparture(): Promise<boolean> {
+    try {
+      // A code means the peer stopped the stream; none, that it took all of it.
+      return (await cancellable(this.sendCancel.signal, () => this.streams.send.stopped())) !== null;
+    } catch {
+      // Either this side reset the stream, or the connection was lost.
+      return !this.sendCancel.signal.aborted;
+    }
   }
 
   async stop(): Promise<void> {

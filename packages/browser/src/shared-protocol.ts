@@ -45,10 +45,20 @@ export interface HandleInput {
   handle: number;
 }
 
+/** What a tab attaches with. */
+export interface AttachInput extends EndpointOptions {
+  /**
+   * The name of a Web Lock the tab holds for as long as it is attached. The
+   * worker queues for the same lock, and is granted it once the tab lets go or
+   * goes away, which is how it learns of a tab that never detached.
+   */
+  liveness?: string;
+}
+
 /** Every call the worker answers. */
 export interface SharedProtocol {
   /** Join the worker's endpoint, binding it if needed. Outputs the endpoint id. */
-  attach: Rpc<EndpointOptions, string>;
+  attach: Rpc<AttachInput, string>;
   /** Abandon the session's exchanges and connections. */
   detach: Rpc<undefined, undefined>;
   ticket: Rpc<undefined, string>;
@@ -61,6 +71,8 @@ export interface SharedProtocol {
   finish: Rpc<StreamInput, undefined>;
   stop: Rpc<StreamInput, undefined>;
   reset: Rpc<StreamInput, undefined>;
+  /** Outputs whether the peer gave up on what the stream sends, once that is known. */
+  stopped: Rpc<StreamInput, boolean>;
   /** Forget a connection or stream the tab can no longer reach. */
   release: Rpc<HandleInput, undefined>;
 }

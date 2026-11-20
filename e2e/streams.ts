@@ -58,7 +58,35 @@ class Buffer {
   }
 }
 
-function endpoint(inbound: Buffer, outbound: Buffer, record: StreamRecord): ExchangeStream {
+/** Settles one direction's `stopped`: whether its reader gave it up. */
+class Departure {
+  private settle: (gone: boolean) => void = () => undefined;
+  readonly settled = new Promise<boolean>(resolve => {
+    this.settle = resolve;
+  });
+
+  /** The reader stopped reading, or reset the exchange. */
+  leave(): void {
+    this.settle(true);
+  }
+
+  /** The writer finished or reset its own send side. */
+  end(): void {
+    this.settle(false);
+  }
+}
+
+/** One side's view of a direction pair: what it reads, what it writes, and who gave up on which. */
+interface Directions {
+  inbound: Buffer;
+  outbound: Buffer;
+  /** Whether this side gave up on what the peer sends. */
+  left: Departure;
+  /** Whether the peer gave up on what this side sends. */
+  departed: Departure;
+}
+
+function endpoint({ inbound, outbound, left, departed }: Directions, record: StreamRecord): ExchangeStream {
   return {
     write(bytes) {
       if (record.reset) return Promise.reject(new Error('Stream was reset'));
@@ -72,18 +100,25 @@ function endpoint(inbound: Buffer, outbound: Buffer, record: StreamRecord): Exch
     finish() {
       record.finished = true;
       outbound.end();
+      departed.end();
       return Promise.resolve();
     },
     stop() {
       record.stopped = true;
       inbound.fail(new Error('Stream read was cancelled'));
+      left.leave();
       return Promise.resolve();
     },
     reset() {
       record.reset = true;
       outbound.fail(new Error('Stream was reset'));
       inbound.fail(new Error('Stream was reset'));
+      departed.end();
+      left.leave();
       return Promise.resolve();
+    },
+    stopped() {
+      return departed.settled;
     }
   };
 }
@@ -103,9 +138,12 @@ export function createStreamPair(): StreamPair {
   const clientRecord: StreamRecord = { finished: false, stopped: false, reset: false };
   const serverRecord: StreamRecord = { finished: false, stopped: false, reset: false };
 
+  const clientLeft = new Departure();
+  const serverLeft = new Departure();
+
   return {
-    client: endpoint(toClient, toServer, clientRecord),
-    server: endpoint(toServer, toClient, serverRecord),
+    client: endpoint({ inbound: toClient, outbound: toServer, left: clientLeft, departed: serverLeft }, clientRecord),
+    server: endpoint({ inbound: toServer, outbound: toClient, left: serverLeft, departed: clientLeft }, serverRecord),
     clientRecord,
     serverRecord
   };

@@ -3,7 +3,7 @@
  */
 
 import type { BrowserCommand } from 'vitest/node';
-import type { SinkState } from './relay-peer.ts';
+import type { EventsState, SinkState } from './relay-peer.ts';
 
 type RelayPeerModule = typeof import('./relay-peer.ts');
 
@@ -23,6 +23,8 @@ declare module 'vitest/browser' {
     peerTicket: () => Promise<string>;
     /** How the relay peer's `/sink?id=…` upload stands, if it has started. */
     sinkState: (id: string) => Promise<SinkState | undefined>;
+    /** How the relay peer's `/events?id=…` response stands, if it has started. */
+    eventsState: (id: string) => Promise<EventsState | undefined>;
     /** Dial `ticket` from Node, reporting how the attempt ended. */
     dialFromNode: (ticket: string) => Promise<string>;
   }
@@ -30,10 +32,11 @@ declare module 'vitest/browser' {
 
 const peerTicket: BrowserCommand<[]> = async () => await (await peerModule()).peerTicket();
 const sinkState: BrowserCommand<[id: string]> = async (_context, id) => (await peerModule()).sinkState(id);
+const eventsState: BrowserCommand<[id: string]> = async (_context, id) => (await peerModule()).eventsState(id);
 const dialFromNode: BrowserCommand<[ticket: string]> = async (_context, ticket) =>
   await (await peerModule()).dialFromNode(ticket);
 
-export const commands = { peerTicket, sinkState, dialFromNode };
+export const commands = { peerTicket, sinkState, eventsState, dialFromNode };
 
 /** Close the relay peer, if a command started it. */
 export async function closeRelayPeer(): Promise<void> {

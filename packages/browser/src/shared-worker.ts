@@ -5,6 +5,9 @@
  * behalf of each tab attached to it. The endpoint lives as long as the worker.
  * Inbound connections are always refused.
  *
+ * A tab that goes away without detaching is detached here: each tab holds a
+ * Web Lock while attached, and the worker is granted it once the tab is gone.
+ *
  * @module
  */
 
@@ -81,6 +84,29 @@ function store<T>(handles: Map<number, T>, value: T): number {
   return nextHandle;
 }
 
+/** Abandon a session's exchanges and connections. Detaching again does nothing. */
+async function detach(session: Session): Promise<void> {
+  // Cleared first, so that a connection or stream still opening is discarded
+  // rather than stored after the cleanup below.
+  session.endpoint = undefined;
+  const streams = [...session.streams.values()];
+  const connections = [...session.connections.values()];
+  session.streams.clear();
+  session.connections.clear();
+  for (const connection of connections) connection.close();
+  await Promise.all(streams.map(stream => stream.reset()));
+}
+
+/**
+ * Detach `session` once the tab holding the `liveness` lock lets go of it.
+ *
+ * The tab takes the lock before attaching and holds it until it closes the
+ * endpoint, so being granted it here means the tab closed or no longer exists.
+ */
+function detachWhenGone(session: Session, liveness: string): void {
+  navigator.locks.request(liveness, () => detach(session)).catch(() => undefined);
+}
+
 type Operations = {
   [Op in SharedOp]: (session: Session, input: SharedInput<Op>) => Promise<SharedOutput<Op>>;
 };
@@ -90,18 +116,11 @@ const operations: Operations = {
     if (session.endpoint) throw new Error('The session is already attached');
     const endpoint = bind(options);
     session.endpoint = endpoint;
+    if (options.liveness !== undefined) detachWhenGone(session, options.liveness);
     return (await endpoint).endpointId();
   },
   detach: async session => {
-    // Cleared first, so that a connection or stream still opening is
-    // discarded rather than stored after the cleanup below.
-    session.endpoint = undefined;
-    const streams = [...session.streams.values()];
-    const connections = [...session.connections.values()];
-    session.streams.clear();
-    session.connections.clear();
-    for (const connection of connections) connection.close();
-    await Promise.all(streams.map(stream => stream.reset()));
+    await detach(session);
     return undefined;
   },
   ticket: async session => await (await endpointOf(session)).ticket(),
@@ -144,6 +163,7 @@ const operations: Operations = {
     await session.streams.get(stream)?.reset();
     return undefined;
   },
+  stopped: async (session, { stream }) => await lookup(session.streams, stream).stopped(),
   release: async (session, { handle }) => {
     // Dropping the last reference lets wasm-bindgen free the object, and Iroh
     // then closes a connection that nothing else holds.

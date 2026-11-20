@@ -71,6 +71,20 @@ export interface ExchangeStream {
    * reads are likewise exempt.
    */
   reset(): Promise<void>;
+  /**
+   * Resolve once it is known whether the peer still wants what this side
+   * sends: `true` when the peer gave it up, by stopping its receive side,
+   * resetting the exchange, or losing the connection; `false` when the send
+   * side ended on this side's terms, finished and acknowledged or reset here.
+   *
+   * Must never reject, and must not hold up a write. It may stay pending for
+   * as long as the send side is open.
+   *
+   * Optional. Without it a peer's departure is noticed only when a write
+   * fails, so a body that is waiting on its source is not released until it
+   * next produces a chunk.
+   */
+  stopped?(): Promise<boolean>;
 }
 
 /** Identity of the peer on the other end of an exchange. */
@@ -227,60 +241,94 @@ function errorPayload(message: string): Uint8Array {
   return bytes.subarray(0, end);
 }
 
-/** Write source chunks, cancelling a stalled source when the exchange aborts. */
+/** A body source that failed, and the message its `ERROR` frame carries. */
+interface SourceFailure {
+  failure: string;
+}
+
+/** Read the next chunk of a body's source, catching the source's own failure. */
+async function readSource(
+  reader: ReadableStreamDefaultReader<Uint8Array>
+): Promise<ReadableStreamReadResult<Uint8Array> | SourceFailure> {
+  try {
+    return await reader.read();
+  } catch (cause) {
+    return { failure: cause instanceof Error ? cause.message : String(cause) };
+  }
+}
+
+/**
+ * Write source chunks until the source ends, resolving with its failure if
+ * that is how it ended.
+ *
+ * Rejects when the exchange aborts or the stream fails, which is how a peer
+ * that stopped reading shows up. The source is cancelled with that reason
+ * first, so that a producer waiting on backpressure is released rather than
+ * left feeding a body nobody reads.
+ */
 async function writeBodyChunks(
   stream: ExchangeStream,
   body: ReadableStream<Uint8Array>,
   signal?: AbortSignal
-): Promise<void> {
+): Promise<SourceFailure | undefined> {
   const reader = body.getReader();
-  const onAbort = () => {
-    // Cancelling releases a stalled read immediately, even if the source's
-    // own cancellation takes longer or fails.
-    reader.cancel(signal?.reason).catch(() => undefined);
+  // Cancelling releases a stalled read immediately, even if the source's own
+  // cancellation takes longer or fails.
+  // oxlint-disable-next-line anti-slop/no-unknown-parameters -- An abort reason or a rejection is any value.
+  const cancel = (reason: unknown) => {
+    reader.cancel(reason).catch(() => undefined);
   };
+  const onAbort = () => cancel(signal?.reason);
   signal?.addEventListener('abort', onAbort, { once: true });
   try {
     // Split each source chunk into bounded frames, until EOF or cancellation.
     for (;;) {
-      const { done, value } = await reader.read();
+      const chunk = await readSource(reader);
+      // A cancelled exchange must not report its own cancellation in-band.
       signal?.throwIfAborted();
-      if (done) break;
-      for (let offset = 0; offset < value.byteLength; offset += MAX_CHUNK_SIZE) {
-        await stream.write(bodyFrame(BodyTag.Data, value.subarray(offset, offset + MAX_CHUNK_SIZE)));
+      if ('failure' in chunk) return chunk;
+      if (chunk.done) return undefined;
+      for (let offset = 0; offset < chunk.value.byteLength; offset += MAX_CHUNK_SIZE) {
+        await stream.write(bodyFrame(BodyTag.Data, chunk.value.subarray(offset, offset + MAX_CHUNK_SIZE)));
       }
     }
+  } catch (cause) {
+    cancel(cause);
+    throw cause;
   } finally {
     signal?.removeEventListener('abort', onAbort);
     reader.releaseLock();
   }
 }
 
+/** Reject if the exchange has aborted, cancelling a body that will now never be sent. */
+function rejectIfAborted(signal: AbortSignal | undefined, body: ReadableStream<Uint8Array> | null): void {
+  if (!signal?.aborted) return;
+  // A body the caller has locked is the caller's to release.
+  if (body && !body.locked) body.cancel(signal.reason).catch(() => undefined);
+  throw signal.reason;
+}
+
 /**
  * Stream a body as body frames, terminating with `END` or `ERROR`.
  *
- * The send side is finished either way, per `SPEC.md`, unless aborted.
+ * A source that fails is reported in-band, since the head is already
+ * committed, and the send side is finished either way, per `SPEC.md`. An
+ * aborted exchange or a failed stream rejects instead, with the body's source
+ * cancelled. `onSourceEnd` runs once the source has nothing more to give,
+ * before the terminal frame is written.
  */
 async function writeBody(
   stream: ExchangeStream,
   body: ReadableStream<Uint8Array> | null,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  onSourceEnd: () => void = () => undefined
 ): Promise<void> {
-  signal?.throwIfAborted();
-  try {
-    if (body) await writeBodyChunks(stream, body, signal);
-    await stream.write(bodyFrame(BodyTag.End, EMPTY));
-  } catch (cause) {
-    // A cancelled exchange must not try to send an in-band body error.
-    if (signal?.aborted) throw signal.reason;
-    // The head is already committed, so the failure has to travel in-band.
-    const message = cause instanceof Error ? cause.message : String(cause);
-    try {
-      await stream.write(bodyFrame(BodyTag.Error, errorPayload(message)));
-    } catch {
-      // The stream is already unusable; the peer will see a truncated body.
-    }
-  }
+  rejectIfAborted(signal, body);
+  const failed = body ? await writeBodyChunks(stream, body, signal) : undefined;
+  onSourceEnd();
+  const terminal = failed ? bodyFrame(BodyTag.Error, errorPayload(failed.failure)) : bodyFrame(BodyTag.End, EMPTY);
+  await stream.write(terminal);
   await stream.finish();
 }
 
@@ -430,14 +478,20 @@ export interface ReceivedRequest {
 
 /**
  * Read a request from an exchange stream, tracking whether its body is read to
- * the end.
+ * the end. `signal`, if given, is the request's own `signal`.
  *
  * @internal Used by `serveExchange`; call {@link readRequest} instead.
  */
-export async function receiveRequest(stream: ExchangeStream, peer: PeerInfo): Promise<ReceivedRequest> {
+export async function receiveRequest(
+  stream: ExchangeStream,
+  peer: PeerInfo,
+  signal?: AbortSignal
+): Promise<ReceivedRequest> {
   const { method, target, headers } = parseRequestHead(await readHead(stream));
   const url = `http://${peer.endpointId}${ORIGIN_SUFFIX}${target}`;
-  const init: RequestInit = { method, headers: decodeHeaders(headers) };
+  // The signal becomes `request.signal`. The body is not tied to it: a peer
+  // that only stopped reading the response may still be uploading.
+  const init: RequestInit = { method, headers: decodeHeaders(headers), signal };
 
   if (isBodyless(method.toUpperCase())) {
     await drainBody(stream);
@@ -465,13 +519,39 @@ export async function readRequest(stream: ExchangeStream, peer: PeerInfo): Promi
   return request;
 }
 
-/** Write a `Response` to an exchange stream as a response head and body. */
-export async function writeResponse(stream: ExchangeStream, response: Response): Promise<void> {
-  await writeHead(stream, {
-    status: response.status,
-    headers: encodeHeaders(response.headers)
-  });
-  await writeBody(stream, response.body);
+/**
+ * Write a response, reporting when its body's source has been drained.
+ *
+ * @internal Used by `serveExchange`; call {@link writeResponse} instead.
+ */
+export async function sendResponse(
+  stream: ExchangeStream,
+  response: Response,
+  signal?: AbortSignal,
+  onSourceEnd?: () => void
+): Promise<void> {
+  rejectIfAborted(signal, response.body);
+  try {
+    await writeHead(stream, {
+      status: response.status,
+      headers: encodeHeaders(response.headers)
+    });
+  } catch (cause) {
+    // The body will never be sent, so its source is released too.
+    if (response.body && !response.body.locked) response.body.cancel(cause).catch(() => undefined);
+    throw cause;
+  }
+  await writeBody(stream, response.body, signal, onSourceEnd);
+}
+
+/**
+ * Write a `Response` to an exchange stream as a response head and body.
+ *
+ * Rejects if the stream fails or `signal` aborts before the body is sent. The
+ * body is cancelled with that reason, so its source stops producing.
+ */
+export async function writeResponse(stream: ExchangeStream, response: Response, signal?: AbortSignal): Promise<void> {
+  await sendResponse(stream, response, signal);
 }
 
 /**

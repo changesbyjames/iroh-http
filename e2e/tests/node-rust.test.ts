@@ -5,7 +5,7 @@
  * assertions are the same ones `node-node.test.ts` runs.
  */
 
-import { afterAll, assert, beforeAll, describe } from 'vitest';
+import { afterAll, assert, beforeAll, describe, expect, it } from 'vitest';
 import { connect, getAddressFromString, type IrohHttpClient } from '@strangecyan/iroh-http-node';
 import type { Endpoint } from '@number0/iroh';
 import { conformance } from '../api.ts';
@@ -44,4 +44,16 @@ describe('node to rust', () => {
     () => connected().client,
     () => connected().clientEndpoint.id().toString()
   );
+
+  it('cancels an upload waiting on its source once the server answers without reading it', async () => {
+    const cancelled = Promise.withResolvers<Error>();
+    const body = new ReadableStream<Uint8Array>({ cancel: reason => cancelled.resolve(reason) });
+    const init = { method: 'POST', body, duplex: 'half' as const };
+
+    const response = await connected().client.fetch('/ping', init);
+
+    await expect(response.text()).resolves.toBe('pong');
+    // Nothing is ever written to the upload, so only the server stopping it can end it.
+    await expect(cancelled.promise).resolves.toMatchObject({ name: 'AbortError' });
+  });
 });

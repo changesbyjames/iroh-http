@@ -126,6 +126,53 @@ it or by streaming it into the response. Once the response is written, any body
 still unread is abandoned and the peer is told to stop sending, so answering an
 upload early (with a `413`, say) does not leave the client blocked.
 
+### Streaming responses and departed readers
+
+A handler may return a body that never ends, such as Server-Sent Events. When
+the peer gives up on the response before all of it is sent, by cancelling the
+response body, aborting its fetch, or losing or closing the connection, the
+server:
+
+- aborts `request.signal` with an `AbortError`, and
+- cancels the response body with the same reason, so the `cancel` of its
+  `ReadableStream` source runs and a producer waiting on backpressure is
+  released.
+
+```ts
+serve(endpoint, request => {
+  const events = new ReadableStream<Uint8Array>({
+    start(controller) {
+      const unsubscribe = subscribe(event => controller.enqueue(encode(event)));
+      // Either of these is enough; both fire when the reader goes away.
+      request.signal.addEventListener('abort', unsubscribe);
+    },
+    cancel(reason) {
+      // Runs with the same `AbortError`.
+    }
+  });
+  return new Response(events, { headers: { 'content-type': 'text/event-stream' } });
+});
+```
+
+This happens while the handler is still running as well as while its body is
+being sent, and it does not wait for a write: a body with nothing to send is
+released too. `request.signal` does not abort when an exchange completes: once
+the response body has been read to its end the signal stays as it is, so it
+only ever means that the exchange was abandoned. A body that fails of its own accord is reported to the
+peer in-band and does not abort the signal either. Disposing the server closes
+its connections, which abandons their exchanges the same way.
+
+How soon the server hears depends on the peer. A browser or Rust client tells
+it at once. A Node client's stop is held back by the native bindings until the
+read it has in flight returns, so it reaches the server with the next bytes the
+server sends, or when the connection closes: a stream that Node clients read
+should send a heartbeat (an SSE comment, say) so that it is not left waiting on
+a reader that has gone. A Node server is under the same limit when it stops an
+upload it has not read.
+
+The same applies to uploads: when the peer stops reading a request body, the
+client cancels the body's source, and the response is still delivered.
+
 ## Browser
 
 The browser package creates its own Iroh endpoint; WebAssembly initialization is
@@ -179,6 +226,11 @@ Because the server is a `tower::Service` and `Body` implements
 adaptation. `Client` is also a `tower::Service`, so layers apply to outbound
 calls. Streaming producers use `Body::channel`.
 
+When a peer gives up on a response, the server drops the service's future if it
+is still running, and the response body, so a `Body::channel` sender's `send`
+fails and its `closed()` resolves, even while the body has nothing to send.
+Dropping a response body on the client tells the server to stop likewise.
+
 ## Interoperability
 
 Interoperability is defined by [SPEC.md](./SPEC.md) and enforced by a single
@@ -192,7 +244,7 @@ mid-stream body failure — which run unchanged against both.
 
 | Pairing        | Suite                         | Status   |
 | -------------- | ----------------------------- | -------- |
-| Rust ↔ Rust    | `crates/iroh-http/tests/`     | 12 tests |
+| Rust ↔ Rust    | `crates/iroh-http/tests/`     | 14 tests |
 | Node ↔ Node    | `e2e/tests/node-node.test.ts` | 23 tests |
 | Node ↔ Rust    | `e2e/tests/node-rust.test.ts` | 23 tests |
 | Browser ↔ Rust | not yet written               | —        |
@@ -231,10 +283,12 @@ A first pass. Known gaps, in rough priority order:
 2. **No trailers, no informational responses, no server push.** The known
    expressiveness limits of version 1; see
    [SPEC.md](./SPEC.md#what-is-intentionally-absent).
-3. **Cancellation is only partly tested.** `core.test.ts` covers body
-   cancellation and truncation against the codec, and the browser stream can
-   now interrupt a stalled read, but none of that is yet exercised against a
-   real stalled QUIC peer.
+3. **A Node peer's stop waits for its read in flight.** The native bindings
+   hold a lock across a read, so a Node client that cancels a quiet response,
+   or a Node server that stops an upload it has not read, tells the peer only
+   once more bytes arrive or the connection closes. Browser and Rust peers stop
+   at once. See
+   [Streaming responses and departed readers](#streaming-responses-and-departed-readers).
 4. **No frozen frame corpus.** The suites exercise live peers and the codec, but
    there is no fixed corpus of encoded bytes that would catch both
    implementations drifting from the specification together.

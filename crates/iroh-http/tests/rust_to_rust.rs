@@ -357,3 +357,90 @@ async fn readiness_aware_middleware_is_polled_before_being_called() {
         );
     }
 }
+
+#[tokio::test]
+async fn an_abandoned_response_releases_a_body_with_nothing_to_send() {
+    use std::time::Duration;
+
+    use tokio::sync::mpsc;
+
+    // The service hands each body's sender to the test, which stands in for a
+    // producer that is waiting for something to send.
+    let (senders, mut produced) = mpsc::unbounded_channel();
+    let (_endpoint, client) = pair(tower::service_fn(move |_: Request<Body>| {
+        let senders = senders.clone();
+        async move {
+            let (sender, body) = Body::channel(1);
+            sender.send("first").await.expect("the body is open");
+            senders.send(sender).expect("the test is listening");
+            Ok::<_, Infallible>(Response::new(body))
+        }
+    }))
+    .await;
+
+    let response = client
+        .fetch(Request::get("/events").body(Body::empty()).expect("builds"))
+        .await
+        .expect("the head arrives");
+    let mut body = response.into_body();
+    let first = body.frame().await.expect("a frame").expect("the frame");
+    assert_eq!(first.into_data().expect("data"), "first");
+    let sender = produced.recv().await.expect("the service ran");
+
+    drop(body);
+
+    // Nothing is written after the first chunk, so only the peer's departure
+    // can close the body.
+    tokio::time::timeout(Duration::from_secs(10), sender.closed())
+        .await
+        .expect("the body is dropped once the peer stops reading");
+    assert!(sender.send("late").await.is_err());
+}
+
+#[tokio::test]
+async fn an_abandoned_exchange_drops_a_service_that_is_still_running() {
+    use std::time::Duration;
+
+    use tokio::sync::{mpsc, oneshot};
+
+    /// Reports being dropped, which is how a service learns it was cancelled.
+    struct Guard(Option<oneshot::Sender<()>>);
+
+    impl Drop for Guard {
+        fn drop(&mut self) {
+            if let Some(dropped) = self.0.take() {
+                let _ = dropped.send(());
+            }
+        }
+    }
+
+    let (started, mut running) = mpsc::unbounded_channel();
+    let (_endpoint, client) = pair(tower::service_fn(move |_: Request<Body>| {
+        let started = started.clone();
+        async move {
+            let (dropped, cancelled) = oneshot::channel();
+            let _guard = Guard(Some(dropped));
+            started.send(cancelled).expect("the test is listening");
+            // Never answers: only being dropped ends this.
+            std::future::pending::<Result<Response<Body>, Infallible>>().await
+        }
+    }))
+    .await;
+
+    let fetching = n0_future::task::spawn({
+        let client = client.clone();
+        async move {
+            let request = Request::get("/wait").body(Body::empty()).expect("builds");
+            client.fetch(request).await
+        }
+    });
+    let cancelled = running.recv().await.expect("the service ran");
+
+    // Dropping the fetch abandons the exchange before any response.
+    fetching.abort();
+
+    tokio::time::timeout(Duration::from_secs(10), cancelled)
+        .await
+        .expect("the service is dropped once the peer abandons the exchange")
+        .expect("the guard reports its drop");
+}

@@ -165,16 +165,31 @@ fn error_payload(message: &str) -> &[u8] {
 
 /// Stream a body as body frames, terminating with `END` or `ERROR`.
 ///
-/// The send side is finished either way, per `SPEC.md`.
+/// The send side is finished either way, per `SPEC.md`. A peer that gives up
+/// on the body, by stopping the stream or losing the connection, fails the
+/// write even while the body has nothing to send, and the body is dropped, so
+/// whatever produces it is released.
 async fn write_body<B>(send: &mut SendStream, body: B) -> Result<(), Error>
 where
     B: HttpBody<Data = Bytes>,
     B::Error: std::fmt::Display,
 {
     let mut body = std::pin::pin!(body);
+    let mut stopped = std::pin::pin!(send.stopped());
     let mut failure = None;
 
-    while let Some(frame) = body.frame().await {
+    loop {
+        // Nothing is finished yet, so the peer cannot have taken all of the
+        // body: `stopped` resolving at all means it will read no more.
+        let next = n0_future::future::or(async { Some(body.frame().await) }, async {
+            let _ = stopped.as_mut().await;
+            None
+        })
+        .await;
+        let Some(next) = next else {
+            return Err(Error::transport("the peer stopped reading the body"));
+        };
+        let Some(frame) = next else { break };
         match frame {
             // Trailers are not expressible in version 1 and are dropped.
             Ok(frame) => {
@@ -241,12 +256,26 @@ async fn drain_body(recv: &mut RecvStream) -> Result<(), Error> {
 }
 
 /// Read body frames into a [`Body`], surfacing `ERROR` as a failure.
+///
+/// Dropping the body abandons the read side, telling the peer to stop sending
+/// even while it has sent nothing to read.
 fn read_body(mut recv: RecvStream) -> Body {
     let (sender, body) = Body::channel(4);
     let sender = sender.into_inner();
     n0_future::task::spawn(async move {
         loop {
-            match read_body_frame(&mut recv).await {
+            let frame =
+                n0_future::future::or(async { Some(read_body_frame(&mut recv).await) }, async {
+                    sender.closed().await;
+                    None
+                })
+                .await;
+            let Some(frame) = frame else {
+                // The consumer dropped the body while the peer was quiet.
+                let _ = recv.stop(ERROR_CODE);
+                break;
+            };
+            match frame {
                 Ok(None) => break,
                 // A zero-length DATA frame is legal but carries no data.
                 Ok(Some(chunk)) if chunk.is_empty() => {}

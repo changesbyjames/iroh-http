@@ -192,6 +192,53 @@ describe('shared endpoint', () => {
     await expect(staying.text('/ping')).resolves.toBe('pong');
   });
 
+  it('resets the exchanges of a tab that goes away without closing, and only that tab', async () => {
+    const key = freshKey();
+    const [leaving, frame] = await openTab();
+    const [staying] = await openTab();
+    await leaving.attach(key, ticket);
+    await staying.attach(key, ticket);
+    const doomed = crypto.randomUUID();
+    const surviving = crypto.randomUUID();
+    leaving.upload(doomed);
+    staying.upload(surviving);
+    await expectUploading(doomed);
+    await expectUploading(surviving);
+
+    // Nothing in the tab runs as it goes; the worker notices by itself.
+    frame.remove();
+
+    await expectReset(doomed);
+    expect(await receivedOver(surviving, 1_000)).toBeGreaterThan(0);
+    expect((await commands.sinkState(surviving))?.outcome).toBe('open');
+    await expect(staying.text('/ping')).resolves.toBe('pong');
+  });
+
+  it.each(['cancels the response body', 'aborts the fetch'])(
+    'releases a streaming handler with nothing to send when the tab %s',
+    async departure => {
+      const endpoint = await attach(freshKey());
+      const client = await connect(endpoint, ticket);
+      const id = crypto.randomUUID();
+      const abort = new AbortController();
+      const response = await client.fetch(`/events?id=${id}`, { signal: abort.signal });
+      const reader = response.body?.getReader();
+      assert(reader, 'the event stream has a body');
+      expect(new TextDecoder().decode((await reader.read()).value)).toBe('data: first\n\n');
+      // Long enough that the next read is waiting in the worker, with nothing coming.
+      await new Promise(resolve => setTimeout(resolve, 500));
+      expect(await commands.eventsState(id)).toEqual({ aborted: false, cancelled: false });
+
+      if (departure === 'aborts the fetch') abort.abort();
+      else await reader.cancel();
+
+      // The peer writes nothing more, so only the stop itself can tell it.
+      await vi.waitFor(async () => expect(await commands.eventsState(id)).toEqual({ aborted: true, cancelled: true }), {
+        timeout: 10_000
+      });
+    }
+  );
+
   it('resets an exchange whose fetch is aborted', async () => {
     const endpoint = await attach(freshKey());
     const client = await connect(endpoint, ticket);
